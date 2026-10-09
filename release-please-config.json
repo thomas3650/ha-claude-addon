@@ -1,0 +1,13 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "ha-claude-addon",
+      "include-component-in-tag": false,
+      "changelog-path": "ha-claude/CHANGELOG.md",
+      "extra-files": [
+        { "type": "yaml", "path": "ha-claude/config.yaml", "jsonpath": "$.version" }
+      ]
+    }
+  }
+}

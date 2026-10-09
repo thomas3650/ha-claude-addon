@@ -1,0 +1,32 @@
+name: Bump Claude Code
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Open a pull request when a newer version exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest="$(npm view @anthropic-ai/claude-code version)"
+          current="$(sed -n 's/^ARG CLAUDE_CODE_VERSION=//p' ha-claude/Dockerfile)"
+          [ "$latest" = "$current" ] && { echo "already on $current"; exit 0; }
+          branch="bump-claude-code-$latest"
+          git ls-remote --exit-code origin "refs/heads/$branch" && { echo "pull request already open"; exit 0; }
+          sed -i "s/^ARG CLAUDE_CODE_VERSION=.*/ARG CLAUDE_CODE_VERSION=$latest/" ha-claude/Dockerfile
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "fix: Claude Code $latest"
+          git push origin "$branch"
+          gh pr create --title "fix: Claude Code $latest" --body "Bumps the pinned Claude Code version from $current to $latest. Check that the add-on still works after installing this version."

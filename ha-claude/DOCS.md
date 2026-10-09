@@ -4,6 +4,15 @@ Runs Claude Code with Remote Control as an unprivileged user, so you can talk
 to it from the Claude app. The add-on's sidebar panel shows the same session in
 a web terminal.
 
+## Install
+
+In Home Assistant, add this repository to the add-on store:
+
+    https://github.com/thomas3650/ha-claude-addon#release
+
+Then install "HA Claude". The `#release` part matters: that branch only ever
+points at a version whose image has been published.
+
 ## First run
 
 1. Start the add-on and open its panel.

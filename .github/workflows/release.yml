@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  packages: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    outputs:
+      created: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+      version: ${{ steps.rp.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Each architecture is built on its own kind of runner, so nothing runs
+  # under emulation.
+  image:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            docker_arch: amd64
+            ha_arch: amd64
+          - runner: ubuntu-24.04-arm
+            docker_arch: arm64
+            ha_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build, test and push
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.version }}-${{ matrix.docker_arch }}
+        run: |
+          docker build -t "$IMAGE" \
+            --build-arg BUILD_VERSION=${{ needs.release-please.outputs.version }} \
+            --build-arg BUILD_ARCH=${{ matrix.ha_arch }} ha-claude
+          tests/container.sh "$IMAGE"
+          docker push "$IMAGE"
+
+  publish:
+    needs: [release-please, image]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+          fetch-depth: 0
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Join the two images under the version tag
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.release-please.outputs.version }}
+        run: docker buildx imagetools create -t "$IMAGE" "$IMAGE-amd64" "$IMAGE-arm64"
+      # Home Assistant installs from the release branch. It moves only after
+      # the image exists, so an update is never offered without its image.
+      - name: Publish the manifest
+        run: git push origin "HEAD:refs/heads/release"
