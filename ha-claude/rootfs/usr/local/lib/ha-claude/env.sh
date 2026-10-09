@@ -26,9 +26,12 @@ claude_env() {
 
 as_claude() {
   local -a vars
+  local runuser_bin
   mapfile -t vars < <(claude_env)
   if [[ "$(id -u)" == 0 ]]; then
-    env -i "${vars[@]}" runuser -u "$HC_USER" -- "$@"
+    # Resolved here: env looks a command up in the new PATH, which has no sbin.
+    runuser_bin="$(command -v runuser || echo /usr/sbin/runuser)"
+    env -i "${vars[@]}" "$runuser_bin" -u "$HC_USER" -- "$@"
   else
     env -i "${vars[@]}" "$@"
   fi
