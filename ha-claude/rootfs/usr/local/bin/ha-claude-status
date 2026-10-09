@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Prints what the watchdog deliberately does not check.
+LIB=/usr/local/lib/ha-claude
+for f in paths log options env session; do
+  # shellcheck disable=SC1090
+  . "$LIB/$f.sh"
+done
+chat_alive && echo "chat session: running" || echo "chat session: not running"
+logged_in && echo "claude login: yes" || echo "claude login: no"
+echo "last sync: $(cat "$HC_STATE/last_sync" 2>/dev/null || echo never) ($(cat "$HC_STATE/last_sync_status" 2>/dev/null || echo unknown))"

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Attaches the web terminal to the chat session, as the Claude user.
+LIB=/usr/local/lib/ha-claude
+for f in paths log options env session; do
+  # shellcheck disable=SC1090
+  . "$LIB/$f.sh"
+done
+chat_alive || start_chat
+as_claude tmux -L "$HC_TMUX_SOCKET" attach -t "$HC_TMUX_SESSION"

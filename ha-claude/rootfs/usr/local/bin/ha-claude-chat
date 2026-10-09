@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# The loop inside the tmux chat session. Runs as the Claude user.
+LIB=/usr/local/lib/ha-claude
+for f in paths log options env session; do
+  # shellcheck disable=SC1090
+  . "$LIB/$f.sh"
+done
+
+cd "$HC_WORKSPACE" || exit 1
+quick_exits=0
+
+while true; do
+  if ! logged_in; then
+    cat <<'EOT'
+
+  Claude Code is not logged in.
+
+  1. Run:  claude
+  2. Follow the login link and accept the prompts it shows.
+  3. Exit Claude, then run:  exit
+     The add-on starts the chat session within a minute.
+
+EOT
+    exec bash -l
+  fi
+  mapfile -t argv < <(chat_command)
+  started=$SECONDS
+  "${argv[@]}"
+  rc=$?
+  if (( SECONDS - started < 30 )); then
+    quick_exits=$((quick_exits + 1))
+  else
+    quick_exits=0
+  fi
+  if (( quick_exits >= 3 )); then
+    echo "Claude Code exited three times within 30 seconds (last code $rc)."
+    echo "Leaving a shell here. Type 'exit' to let the add-on try again."
+    exec bash -l
+  fi
+  echo "Claude Code exited with code $rc. Starting again in 10 seconds."
+  sleep 10
+done
