@@ -1,0 +1,9 @@
+# Path variables. Tests override HC_DATA before sourcing.
+: "${HC_DATA:=/data}"
+: "${HC_OPTIONS:=$HC_DATA/options.json}"
+: "${HC_HOME:=$HC_DATA/home}"
+: "${HC_REPO:=$HC_DATA/repo}"
+: "${HC_WORKSPACE:=$HC_DATA/workspace/assistant}"
+: "${HC_HANDOVER:=$HC_DATA/handover}"
+: "${HC_STATE:=$HC_DATA/state}"
+: "${HC_USER:=claude}"
