@@ -7,7 +7,7 @@ always-on assistant. See [the add-on documentation](ha-claude/DOCS.md).
 
     brew install bats-core shellcheck jq
     bats tests/
-    shellcheck -x -s bash ha-claude/rootfs/usr/local/lib/ha-claude/*.sh ha-claude/rootfs/usr/local/bin/*
+    shellcheck -x -s bash ha-claude/rootfs/usr/local/lib/ha-claude/*.sh ha-claude/rootfs/usr/local/bin/* tests/container.sh
 
 With Docker available:
 
