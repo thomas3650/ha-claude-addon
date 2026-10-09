@@ -1,0 +1,32 @@
+name: HA Claude
+version: "0.1.0"
+slug: ha_claude
+description: Claude Code with Remote Control as an always-on assistant
+url: https://github.com/thomas3650/ha-claude-addon
+arch:
+  - aarch64
+  - amd64
+init: true
+startup: application
+boot: auto
+stdin: true
+homeassistant_api: true
+ingress: true
+ingress_port: 7681
+ingress_stream: true
+panel_icon: mdi:robot-outline
+panel_title: Claude
+watchdog: tcp://[HOST]:[PORT:7681]
+backup_exclude:
+  - home/.cache/**
+  - home/.npm/**
+  - repo/**
+options:
+  session_name: Home
+  extra_packages: []
+schema:
+  session_name: str
+  repo_url: str?
+  deploy_key: password?
+  extra_packages:
+    - str
