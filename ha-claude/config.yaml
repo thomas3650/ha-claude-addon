@@ -3,6 +3,7 @@ version: "0.1.0"
 slug: ha_claude
 description: Claude Code with Remote Control as an always-on assistant
 url: https://github.com/thomas3650/ha-claude-addon
+image: ghcr.io/thomas3650/ha-claude-addon
 arch:
   - aarch64
   - amd64
