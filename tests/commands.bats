@@ -59,3 +59,32 @@ stub_actions() {
   [ "$(cat "$CALLS")" = "outcome morning not_implemented" ]
   [ ! -e "$HC_STATE/morning.lock" ]
 }
+
+@test "raise_outcome keeps the Supervisor token off the command line" {
+  load_lib outcome
+  export SUPERVISOR_TOKEN=tok-123
+  curl() { printf '%s\n' "$*" > "$BATS_TEST_TMPDIR/curl-args"; cat > "$BATS_TEST_TMPDIR/curl-stdin"; }
+  raise_outcome ping ok
+  ! grep -q "tok-123" "$BATS_TEST_TMPDIR/curl-args"
+  grep -q "Bearer tok-123" "$BATS_TEST_TMPDIR/curl-stdin"
+}
+
+@test "a malformed command is ignored with a log line, an empty one silently" {
+  load_lib commands; stub_actions
+  run handle_command '{"broken'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring malformed command"* ]]
+  run handle_command ''
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "a morning lock left by a crash is cleared at start-up" {
+  load_lib commands; stub_actions
+  mkdir -p "$HC_STATE/morning.lock"
+  clear_stale_locks
+  [ ! -e "$HC_STATE/morning.lock" ]
+  handle_command 'morning'
+  [ "$(cat "$CALLS")" = "outcome morning not_implemented" ]
+}

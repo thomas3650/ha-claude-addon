@@ -19,7 +19,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 |---|---|
 | `session_name` | The name the session has in the Claude app |
 | `repo_url` | Optional. A git repo whose `assistant/` folder becomes Claude's working folder |
-| `deploy_key` | A read-only SSH deploy key for that repo, as text or base64. Needed whenever `repo_url` is set |
+| `deploy_key` | A read-only SSH deploy key for that repo, as text or base64, without a passphrase. Needed whenever `repo_url` is set |
 | `extra_packages` | Optional. Ubuntu packages to install at start |
 
 ## Commands
@@ -35,6 +35,11 @@ Send one of these with Home Assistant's add-on stdin action:
 
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data.
+
+## Is it working?
+
+Run `ha-claude-status` in the panel. It shows whether the chat session is
+running, whether Claude is logged in, and when the working folder last synced.
 
 ## What Claude can and cannot reach
 

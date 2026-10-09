@@ -37,3 +37,18 @@ load helpers
   run logged_in
   [ "$status" -eq 0 ]
 }
+
+@test "chat_command takes the session name from HC_SESSION_NAME when it cannot read the options" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  HC_SESSION_NAME=Office run chat_command
+  [[ "$output" == *"--remote-control=Office"* ]]
+}
+
+@test "start_chat hands the session name from the options to the chat session" {
+  load_lib options session
+  set_options '{"session_name":"Office"}'
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
+  start_chat
+  grep -q -- "-e HC_SESSION_NAME=Office" "$BATS_TEST_TMPDIR/as_claude"
+}

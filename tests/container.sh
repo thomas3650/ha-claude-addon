@@ -19,6 +19,11 @@ status="$(docker exec "$name" ha-claude-status)"
 grep -q "claude login: no" <<<"$status" || fail "expected 'claude login: no'"
 grep -q "chat session: running" <<<"$status" || fail "the tmux session is not running"
 
+# The status command also works in the web terminal, which runs as the Claude user.
+status="$(docker exec -u claude "$name" ha-claude-status)"
+grep -q "chat session: running" <<<"$status" || fail "the Claude user does not see the chat session"
+grep -q "last sync: never (none)" <<<"$status" || fail "the Claude user cannot read the sync status"
+
 # Ingress answers.
 docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/ || fail "nginx does not answer on 7681"
 

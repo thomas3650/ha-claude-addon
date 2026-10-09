@@ -11,7 +11,8 @@ logged_in() {
 # Prints the argv for the chat session, one argument per line.
 chat_command() {
   local name today
-  name="$(opt '.session_name' 'Home')"
+  # The Claude user cannot read the options; start_chat passes the name in.
+  name="${HC_SESSION_NAME:-$(opt '.session_name' 'Home')}"
   today="$(date +%F)"
   local -a argv=(
     claude
@@ -32,6 +33,7 @@ start_chat() {
   chat_alive && return 0
   log "chat: starting a new session"
   as_claude tmux -L "$HC_TMUX_SOCKET" new-session -d -s "$HC_TMUX_SESSION" \
+    -e "HC_SESSION_NAME=$(opt '.session_name' 'Home')" \
     -c "$HC_WORKSPACE" /usr/local/bin/ha-claude-chat
 }
 
