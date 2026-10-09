@@ -11,6 +11,12 @@ parse_command() {
   printf '%s' "$word"
 }
 
+# A morning lock that survived a crash or a restart would refuse every later
+# morning command. Called once at start-up, before any command is read.
+clear_stale_locks() {
+  rmdir "$HC_STATE/morning.lock" 2>/dev/null || true
+}
+
 handle_command() {
   local word
   mkdir -p "$HC_STATE"
@@ -40,6 +46,7 @@ handle_command() {
       raise_outcome morning not_implemented
       ;;
     "")
+      [[ -n "${1//[[:space:]]/}" ]] && log "commands: ignoring malformed command"
       ;;
     *)
       log "commands: ignoring unknown command"

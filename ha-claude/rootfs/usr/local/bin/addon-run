@@ -14,7 +14,7 @@ install_extra_packages() {
   mapfile -t packages < <(jq -r '.extra_packages[]? // empty' "$HC_OPTIONS" 2>/dev/null)
   (( ${#packages[@]} )) || return 0
   log "installing extra packages: ${packages[*]}"
-  if ! { apt-get update -qq && apt-get install -y --no-install-recommends "${packages[@]}"; }; then
+  if ! { timeout 120 apt-get update -qq && timeout 600 apt-get install -y --no-install-recommends "${packages[@]}"; } </dev/null; then
     log "WARNING: extra packages could not be installed; continuing"
   fi
 }
@@ -44,6 +44,7 @@ sync_workspace
 ensure_layout
 start_ingress
 start_chat
+clear_stale_locks
 logged_in || log "Claude Code is not logged in: open the add-on's web terminal and follow the steps shown"
 log "ready"
 

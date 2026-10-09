@@ -3,15 +3,17 @@
 # previous workspace copy stays in place.
 
 _sync_status() {
-  mkdir -p "$HC_STATE"
-  printf '%s\n' "$1" > "$HC_STATE/last_sync_status"
+  mkdir -p "$HC_STATUS"
+  printf '%s\n' "$1" > "$HC_STATUS/last_sync_status"
 }
 
 # Writes the deploy key from the options to HC_STATE/deploy_key.
 # Accepts the key as text or base64-encoded. Returns 1 if empty, 2 if invalid.
+# A key with a passphrase counts as invalid: nobody is there to type it.
 _write_deploy_key() {
   local raw key="$HC_STATE/deploy_key"
   raw="$(opt '.deploy_key')"
+  rm -f "$key"
   [[ -n "$raw" ]] || return 1
   mkdir -p "$HC_STATE"
   ( umask 077
@@ -20,10 +22,15 @@ _write_deploy_key() {
     else
       printf '%s' "$raw" | base64 -d > "$key" 2>/dev/null || true
     fi )
-  if ! ssh-keygen -y -f "$key" >/dev/null 2>&1; then
+  if ! ssh-keygen -y -P '' -f "$key" </dev/null >/dev/null 2>&1; then
     rm -f "$key"
     return 2
   fi
+}
+
+# ssh never asks a question and gives up on a network that does not answer.
+_git_ssh_command() {
+  printf '%s' "ssh -i $HC_STATE/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$HC_STATE/known_hosts"
 }
 
 _fetch_repo() {
@@ -64,13 +71,14 @@ sync_workspace() {
       _sync_status "failed: deploy key is empty"
       return 0
     elif (( rc == 2 )); then
-      log "sync: the deploy key is not a valid private key; keeping the previous workspace"
+      log "sync: the deploy key is not a valid private key without a passphrase; keeping the previous workspace"
       _sync_status "failed: deploy key is not valid"
       return 0
     fi
-    export GIT_SSH_COMMAND="ssh -i $HC_STATE/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$HC_STATE/known_hosts"
+    GIT_SSH_COMMAND="$(_git_ssh_command)"
+    export GIT_SSH_COMMAND
   fi
-  if ! _fetch_repo "$url" 2>/dev/null; then
+  if ! _fetch_repo "$url" </dev/null 2>/dev/null; then
     log "sync: could not fetch the repo; keeping the previous workspace"
     _sync_status "failed: fetch"
     return 0
@@ -80,7 +88,7 @@ sync_workspace() {
     _sync_status "failed: no assistant folder"
     return 0
   fi
-  date -u +%Y-%m-%dT%H:%M:%SZ > "$HC_STATE/last_sync"
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$HC_STATUS/last_sync"
   _sync_status ok
   log "sync: workspace updated"
 }

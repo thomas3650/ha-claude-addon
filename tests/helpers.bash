@@ -2,7 +2,7 @@
 LIB="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/lib/ha-claude"
 
 setup() {
-  unset HC_OPTIONS HC_HOME HC_REPO HC_WORKSPACE HC_HANDOVER HC_STATE
+  unset HC_OPTIONS HC_HOME HC_REPO HC_WORKSPACE HC_HANDOVER HC_STATE HC_STATUS HC_SESSION_NAME
   export HC_DATA="$BATS_TEST_TMPDIR/data"
   export HC_USER="$(id -un)"
   mkdir -p "$HC_DATA"

@@ -25,7 +25,7 @@ make_fixture_repo() {
   [ ! -e "$HC_WORKSPACE/docs" ]
   [ ! -e "$(dirname "$HC_WORKSPACE")/CLAUDE.md" ]
   [ ! -e "$HC_DATA/CLAUDE.md" ]
-  [ "$(cat "$HC_STATE/last_sync_status")" = "ok" ]
+  [ "$(cat "$HC_STATUS/last_sync_status")" = "ok" ]
 }
 
 @test "a second sync picks up a new commit" {
@@ -50,7 +50,7 @@ make_fixture_repo() {
   run sync_workspace
   [ "$status" -eq 0 ]
   [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "assistant rules" ]
-  [[ "$(cat "$HC_STATE/last_sync_status")" == failed:* ]]
+  [[ "$(cat "$HC_STATUS/last_sync_status")" == failed:* ]]
 }
 
 @test "first boot with no repo_url leaves an empty workspace" {
@@ -59,7 +59,7 @@ make_fixture_repo() {
   run sync_workspace
   [ "$status" -eq 0 ]
   [ -d "$HC_WORKSPACE" ]
-  [ "$(cat "$HC_STATE/last_sync_status")" = "none" ]
+  [ "$(cat "$HC_STATUS/last_sync_status")" = "none" ]
 }
 
 @test "a repo without assistant/ keeps the previous copy" {
@@ -90,6 +90,33 @@ make_fixture_repo() {
   ensure_layout
   run sync_workspace
   [ "$status" -eq 0 ]
-  [[ "$output" == *"deploy key is not a valid private key"* ]]
+  [[ "$output" == *"deploy key is not a valid private key without a passphrase"* ]]
   [ ! -e "$HC_STATE/deploy_key" ]
+}
+
+@test "a deploy key with a passphrase is refused without reading standard input" {
+  load_lib options layout sync
+  ssh-keygen -q -t ed25519 -N "pw" -f "$BATS_TEST_TMPDIR/k"
+  jq -n --arg k "$(cat "$BATS_TEST_TMPDIR/k")" '{repo_url:"git@github.com:example/private.git",deploy_key:$k}' > "$HC_DATA/options.json"
+  ensure_layout
+  run _write_deploy_key <<<"pw"
+  [ "$status" -eq 2 ]
+  [ ! -e "$HC_STATE/deploy_key" ]
+}
+
+@test "an emptied deploy key option removes the old key file" {
+  load_lib options layout sync
+  ensure_layout
+  echo old > "$HC_STATE/deploy_key"
+  set_options '{"repo_url":"git@github.com:example/private.git","deploy_key":""}'
+  run sync_workspace
+  [ ! -e "$HC_STATE/deploy_key" ]
+}
+
+@test "ssh never prompts and gives up on a dead network" {
+  load_lib options layout sync
+  run _git_ssh_command
+  [[ "$output" == *"BatchMode=yes"* ]]
+  [[ "$output" == *"ConnectTimeout=15"* ]]
+  [[ "$output" == *"-i $HC_STATE/deploy_key"* ]]
 }

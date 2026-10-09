@@ -7,11 +7,14 @@ raise_outcome() {
     return 0
   fi
   body="$(jq -cn --arg c "$command" --arg o "$outcome" '{command:$c,outcome:$o}')"
+  # The token goes to curl on standard input, not as an argument: arguments
+  # are readable by every user in the container.
   if curl -fsS -m 10 -o /dev/null -X POST \
-       -H "Authorization: Bearer $SUPERVISOR_TOKEN" \
        -H "Content-Type: application/json" \
        -d "$body" \
-       "${HC_CORE_API:-http://supervisor/core/api}/events/ha_claude_outcome"; then
+       -K - \
+       "${HC_CORE_API:-http://supervisor/core/api}/events/ha_claude_outcome" \
+       <<<"header = \"Authorization: Bearer $SUPERVISOR_TOKEN\""; then
     log "outcome: $command=$outcome"
   else
     log "outcome: $command=$outcome (could not reach Home Assistant)"
