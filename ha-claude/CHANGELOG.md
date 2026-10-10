@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.5.1...v0.6.0) (2026-10-10)
+
+
+### Features
+
+* the morning command runs the briefing and starts a new chat session ([#15](https://github.com/thomas3650/ha-claude-addon/issues/15)) ([ed4f169](https://github.com/thomas3650/ha-claude-addon/commit/ed4f169961ce96b060a7c7f969d2036bcd7b22af))
+
 ## [0.5.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.5.0...v0.5.1) (2026-10-10)
 
 
