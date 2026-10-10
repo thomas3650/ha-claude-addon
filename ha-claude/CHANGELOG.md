@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.2.0...v0.2.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* log sessions started from the web terminal; document the login link and the shell ([#5](https://github.com/thomas3650/ha-claude-addon/issues/5)) ([be43ae2](https://github.com/thomas3650/ha-claude-addon/commit/be43ae2cc76946bfe3dc2e58e3ffc41dce48004a))
+
 ## [0.2.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.1.0...v0.2.0) (2026-10-09)
 
 
