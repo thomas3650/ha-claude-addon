@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.3.0...v0.4.0) (2026-10-10)
+
+
+### Features
+
+* a shell link in the panel, and deploy keys that survive a one-line field ([#9](https://github.com/thomas3650/ha-claude-addon/issues/9)) ([97b103b](https://github.com/thomas3650/ha-claude-addon/commit/97b103b47ad19300f9fc9a853f798ebd7edc6721))
+
 ## [0.3.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.2.1...v0.3.0) (2026-10-10)
 
 
