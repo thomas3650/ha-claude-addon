@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The loop inside the tmux chat session. Runs as the Claude user.
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env session; do
+for f in paths log options env retention session; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -26,6 +26,7 @@ EOT
     exec bash -l
   fi
   next_chat_argv
+  clean_handover
   started=$SECONDS
   "${CHAT_ARGV[@]}"
   rc=$?

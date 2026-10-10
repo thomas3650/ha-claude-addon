@@ -197,7 +197,7 @@ make_key() {
   [ "$(grep -c '^github.com ' "$hosts")" -eq 3 ]
   grep -q '^github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl$' "$hosts"
   cmd="$(_git_ssh_command)"
-  [[ "$cmd" == *"UserKnownHostsFile=$HC_KNOWN_HOSTS $HC_STATE/known_hosts'"* ]]
+  [[ "$cmd" == *"UserKnownHostsFile=$HC_STATE/known_hosts $HC_KNOWN_HOSTS'"* ]]
   [[ "$cmd" == *"StrictHostKeyChecking=accept-new"* ]]
   [[ "$cmd" != *"StrictHostKeyChecking=no"* ]]
 }

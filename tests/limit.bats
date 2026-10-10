@@ -43,8 +43,8 @@ LIMIT="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   [ ! -e "$mark" ]
 }
 
-@test "a command that ends just as the time is up keeps its own status" {
-  run "$LIMIT" 1 bash -c 'sleep 0.6; exit 5'
+@test "a command that ends just as the time is up keeps its own status, also when it left something running" {
+  run "$LIMIT" 1 bash -c 'sleep 20 >/dev/null 2>&1 & sleep 0.6; exit 5'
   [ "$status" -eq 5 ]
 }
 

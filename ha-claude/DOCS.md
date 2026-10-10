@@ -55,9 +55,9 @@ Send one of these with Home Assistant's add-on stdin action:
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data. For `restart-chat` the outcome is `ok`, or `failed`
 when no chat session could be started. For `sync` it is `ok` when the
-working folder was renewed, `kept` when the repo could not be fetched and
-the previous working folder stays in use, and `failed` when no chat session
-could be started. After `kept`, the add-on's log and `ha-claude-status` say
+working folder was renewed or no repo is configured, `kept` when the
+working folder could not be renewed and the previous one stays in use, and
+`failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say
 why.
 
 ## The morning run
@@ -172,5 +172,6 @@ where Claude can write. Files named `YYYY-MM-DD.md` there are deleted once
 their date is more than 30 days ago. Files that Claude Code could read as
 instructions or settings (`CLAUDE.md`, `CLAUDE.local.md`, `.claude`,
 `.mcp.json`, in any case and at any depth) are removed from that folder
-whenever a chat session or a morning run starts, and the log says so.
+each time Claude Code is started, for the chat session or for a morning
+run. When a session or a run starts, the log says so.
 Nothing else in that folder is touched.

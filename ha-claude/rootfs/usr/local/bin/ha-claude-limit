@@ -21,7 +21,7 @@ stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
   done
   # The command ended by itself in the last second: that is not a timeout.
   # What it left behind is stopped all the same.
-  kill -0 "$pid" 2>/dev/null || { stop TERM; exit 0; }
+  kill -0 "$pid" 2>/dev/null || { stop TERM && sleep 1 && stop KILL; exit 0; }
   stop TERM || exit 0
   for (( i = 0; i < grace; i++ )); do
     # The command is gone; what it started may not be.
