@@ -103,11 +103,22 @@ Devices & services, and review Settings, Voice assistants, Expose before
 you do: every exposed entity can be controlled. Whether Claude asks before
 it acts is decided by the permission rules in the working folder.
 
+The listener serves every process in the container. A shell in the panel
+can use it, and so can any shell command Claude is allowed to run, without
+a permission prompt for the tool. Keep the shell denied for Claude in the
+working folder's rules, or allow only commands that cannot reach it.
+
 When the add-on starts it tries the address once and logs the status code
 of the answer, as `proxy: Home Assistant answered NNN through the
-listener`. 404 means the way works and the integration is missing, 401 that
-Home Assistant refused the token, and 502 that Home Assistant could not be
-reached.
+listener`:
+
+| Logged | Meaning |
+|---|---|
+| A code from 200 to 299 | It works |
+| 404 | The way works; the integration is not set up |
+| 401 | Home Assistant refused the token |
+| 502 | Home Assistant could not be reached |
+| `nothing` | No answer within fifteen seconds |
 
 ## Is it working?
 

@@ -25,10 +25,14 @@ write_proxy_auth() {
   else
     log "proxy: the token from Home Assistant is not usable; requests will be refused there"
   fi
-  mkdir -p "$HC_PROXY_DIR"
-  chmod 700 "$HC_PROXY_DIR"
-  ( umask 077; printf '%s\n' "$line" > "$HC_PROXY_DIR/proxy-auth.conf" )
-  chmod 600 "$HC_PROXY_DIR/proxy-auth.conf"
+  # A new file each time, so the token is never written into a file with
+  # an older mode. Without the file nginx does not start: say so.
+  if ! { mkdir -p "$HC_PROXY_DIR" && chmod 700 "$HC_PROXY_DIR" \
+         && rm -f "$HC_PROXY_DIR/proxy-auth.conf" \
+         && ( umask 077; printf '%s\n' "$line" > "$HC_PROXY_DIR/proxy-auth.conf" ); }; then
+    log "proxy: the token file could not be written; nginx will not start"
+    return 1
+  fi
 }
 
 # render_nginx_conf <template> - prints the configuration.
@@ -49,9 +53,7 @@ render_nginx_conf() {
 }
 
 # Asks Home Assistant once through the listener and logs the status code,
-# and nothing else of the answer. 404 means the way works and the MCP Server
-# integration is not set up; 401 means the token was refused; 502 means the
-# upstream could not be reached.
+# and nothing else of the answer. What the codes mean is in DOCS.md.
 check_proxy() {
   local code=""
   code="$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X POST \

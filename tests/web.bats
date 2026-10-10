@@ -65,6 +65,27 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   [ "$(mode "$HC_PROXY_DIR")" = "700" ]
 }
 
+@test "a token file left with a wider mode is replaced, not written into" {
+  load_lib web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" SUPERVISOR_TOKEN="tok-123"
+  mkdir -p "$HC_PROXY_DIR"
+  echo old > "$HC_PROXY_DIR/proxy-auth.conf"
+  chmod 644 "$HC_PROXY_DIR/proxy-auth.conf"
+  write_proxy_auth
+  [ "$(stat -c %a "$HC_PROXY_DIR/proxy-auth.conf" 2>/dev/null || stat -f %Lp "$HC_PROXY_DIR/proxy-auth.conf")" = "600" ]
+  grep -q 'Bearer tok-123' "$HC_PROXY_DIR/proxy-auth.conf"
+}
+
+@test "a token file that cannot be written is logged" {
+  load_lib web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/file/run" SUPERVISOR_TOKEN="tok-123"
+  : > "$BATS_TEST_TMPDIR/file"
+  run write_proxy_auth
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not be written"* ]]
+  [[ "$output" != *"tok-123"* ]]
+}
+
 @test "without a token, or with one that could end the string, the header is set empty" {
   load_lib web
   export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run"

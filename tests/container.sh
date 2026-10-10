@@ -152,7 +152,8 @@ for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
   sleep 1
 done
-docker exec -d "$name" node -e 'require("http").createServer((q, s) => s.end(q.method + " " + q.url + " " + (q.headers.authorization || "none"))).listen(7690, "127.0.0.1")'
+grep -q "ready" <<<"$(logs)" || fail "the second container never logged ready"
+docker exec -d "$name" node -e 'require("http").createServer((q, s) => s.end(q.method + " " + q.url + " " + (q.headers.authorization || "none"))).listen(7690, "127.0.0.1")' || fail "the stand-in upstream did not start"
 sent=""
 for _ in $(seq 1 10); do
   sent="$(docker exec -u claude "$name" curl -s -m 10 -X POST -H 'Authorization: Bearer other' -d '{}' 'http://127.0.0.1:7684/mcp?x=1')" || true
