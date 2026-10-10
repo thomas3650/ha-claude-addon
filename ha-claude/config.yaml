@@ -22,6 +22,7 @@ backup_exclude:
   - home/.cache/**
   - home/.npm/**
   - repo/**
+  - state/morning.log
 options:
   session_name: Home
   extra_packages: []

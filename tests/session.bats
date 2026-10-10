@@ -94,3 +94,23 @@ load helpers
   [ "${CHAT_ARGV[0]}" = "claude" ]
   [[ "${CHAT_ARGV[*]}" != *"Say hello"* ]]
 }
+
+@test "with an opening prompt a session that appeared in between is ended, so the prompt is not lost" {
+  load_lib options env session
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *new-session* ]] || return 0; }
+  start_chat "Say hello to the owner"
+  [ "$(grep -c -- "kill-session" "$BATS_TEST_TMPDIR/as_claude")" -eq 1 ]
+  grep -q -- "-e HC_OPENING_PROMPT=Say hello to the owner" "$BATS_TEST_TMPDIR/as_claude"
+  : > "$BATS_TEST_TMPDIR/as_claude"
+  start_chat
+  run grep -- "new-session\|kill-session" "$BATS_TEST_TMPDIR/as_claude"
+  [ "$status" -eq 1 ]
+}
+
+@test "a chat session that cannot be started is tried once more, and the failure is logged" {
+  load_lib options env session
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; return 1; }
+  run start_chat
+  [ "$(grep -c -- "new-session" "$BATS_TEST_TMPDIR/as_claude")" -eq 2 ]
+  [[ "$output" == *"could not be started"* ]]
+}

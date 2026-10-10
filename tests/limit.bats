@@ -33,3 +33,12 @@ LIMIT="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   run "$LIMIT" 10 printf '%s|' "a b" "c"
   [ "$output" = "a b|c|" ]
 }
+
+@test "what the command started is stopped with it" {
+  command -v setsid >/dev/null || skip "no setsid here"
+  mark="$BATS_TEST_TMPDIR/child-alive"
+  run "$LIMIT" 1 bash -c "( sleep 4; touch '$mark' ) & wait"
+  [ "$status" -eq 124 ]
+  sleep 5
+  [ ! -e "$mark" ]
+}

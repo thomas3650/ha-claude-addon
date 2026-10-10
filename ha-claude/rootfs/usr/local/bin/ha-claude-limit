@@ -5,19 +5,27 @@
 # with 124 when the time ran out.
 limit="$1"; shift
 grace="${HC_LIMIT_GRACE:-30}"
-"$@" &
+# The command leads its own process group where that is possible, so that
+# what it started is stopped with it.
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$@" &
+else
+  "$@" &
+fi
 pid=$!
+stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
 (
   for (( i = 0; i < limit; i++ )); do
     kill -0 "$pid" 2>/dev/null || exit 0
     sleep 1
   done
-  kill -TERM "$pid" 2>/dev/null
+  # Nothing left to stop: the command ended by itself in the last second.
+  stop TERM || exit 0
   for (( i = 0; i < grace; i++ )); do
     kill -0 "$pid" 2>/dev/null || exit 3
     sleep 1
   done
-  kill -KILL "$pid" 2>/dev/null
+  stop KILL
   exit 3
 ) &
 watchdog=$!

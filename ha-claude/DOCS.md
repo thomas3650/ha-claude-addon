@@ -34,7 +34,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `deploy_key` | A read-only SSH deploy key for that repo, without a passphrase: the private key, pasted as it is or base64-encoded on one line. The field is a single line; the add-on puts the line breaks back. Needed whenever `repo_url` is set |
 | `extra_packages` | Optional. Ubuntu packages to install at start |
 | `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; any other entry is refused. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
-| `morning_timeout` | The longest a morning run may take, in seconds. When the time is up the run is stopped and the outcome is `timeout` |
+| `morning_timeout` | The longest a morning run may take, in seconds. |
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 
 ## Commands
@@ -65,13 +65,12 @@ holds only allowed tools.
 
 When the run has ended, the add-on ends the chat session and starts a new
 one. The new session opens by presenting the day's summary, or by saying
-that the run did not finish. The event `ha_claude_outcome` then carries
-`command: morning` and one of these outcomes:
+that the run did not finish. The outcome is one of:
 
 | Outcome | Meaning |
 |---|---|
 | `ok` | The run ended without an error and wrote today's handover file |
-| `failed` | The run ended with an error, or today's handover file was not written |
+| `failed` | The run ended with an error, or today's handover file was not written. Reaching `morning_max_turns` is an error, also when the file was written |
 | `timeout` | The run took longer than `morning_timeout` and was stopped |
 | `not_configured` | The working folder has no agent `morning-briefing`; nothing was run and the chat session was left alone |
 
@@ -81,8 +80,10 @@ waits for the event needs a timeout longer than `morning_timeout` plus a
 minute. Nothing is retried.
 
 The add-on's log shows that a run started, how it ended and how long it
-took. What Claude printed is kept in `/data/state/morning.log`, which only
-root can read, because it can hold what Claude read.
+took. What Claude printed is kept in `/data/state/morning.log`, because it
+can hold what Claude read: only root can read it, which means from the host
+and not from the panel, and it is left out of backups. The run keeps no
+transcript.
 
 ## Is it working?
 

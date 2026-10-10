@@ -99,6 +99,10 @@ grep -q -E "outcome: morning=(failed|timeout)" <<<"$(logs)" || fail "the morning
 docker exec "$name" test -f /data/state/morning.log || fail "the morning run's output was not kept"
 docker exec "$name" runuser -u claude -- cat /data/state/morning.log >/dev/null 2>&1 && fail "the Claude user can read the morning run's output"
 [[ "$(logs | grep -c 'chat: starting a new session')" -gt "$starts_before" ]] || fail "no new chat session after the morning command"
+for _ in $(seq 1 10); do
+  docker exec "$name" pgrep -u claude tmux >/dev/null && break
+  sleep 1
+done
 docker exec "$name" pgrep -u claude tmux >/dev/null || fail "no chat session after the morning command"
 
 # Retention: a handover file dated long ago is gone after a restart.

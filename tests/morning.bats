@@ -55,6 +55,7 @@ EOT
   [[ "$args" == *"$TODAY_FILE"* ]]
   [[ "$args" == *$'--agent\nmorning-briefing'* ]]
   [[ "$args" == *$'--max-turns\n40'* ]]
+  [[ "$args" == *"--no-session-persistence"* ]]
   [[ "$args" == *$'--permission-mode\ndefault'* ]]
   [[ "$args" != *"dangerously"* ]]
 }

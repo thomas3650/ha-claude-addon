@@ -43,6 +43,7 @@ run_morning() {
       "$HC_LIMIT_BIN" "$_rm_limit" "$HC_CLAUDE_BIN" \
       -p "Today is $_rm_today. Today's handover file is $_rm_file. Do your morning run." \
       --agent "$HC_MORNING_AGENT" --max-turns "$_rm_turns" --permission-mode default \
+      --no-session-persistence \
   ) </dev/null >>"$HC_STATE/morning.log" 2>&1 &
   wait $! || _rm_rc=$?
   log "morning: the run ended with status $_rm_rc after $((SECONDS - _rm_started)) seconds"
