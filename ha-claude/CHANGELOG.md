@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.2.1...v0.3.0) (2026-10-10)
+
+
+### Features
+
+* managed settings from the working folder, and named values for Claude Code's environment ([#7](https://github.com/thomas3650/ha-claude-addon/issues/7)) ([44242d6](https://github.com/thomas3650/ha-claude-addon/commit/44242d6ba8d20485e00166e656d9060e9fc326ca))
+
 ## [0.2.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.2.0...v0.2.1) (2026-10-10)
 
 
