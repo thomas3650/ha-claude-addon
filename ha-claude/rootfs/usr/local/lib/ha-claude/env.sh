@@ -10,6 +10,24 @@ resolve_tz() {
   export TZ
 }
 
+# Extra variables for the Claude user, from the option assistant_env. Only
+# names starting with ASSISTANT_ are accepted, so an option cannot replace
+# HOME, PATH or a variable Claude Code itself reads. Each entry is judged
+# whole, inside jq, so an entry with a line break cannot become two. A
+# refused entry is logged by its leading name only: the rest may be a secret
+# pasted into the wrong field.
+assistant_env() {
+  local re='\AASSISTANT_[A-Z0-9_]+=[^\x00-\x1f\x7f]*\z' name
+  [[ -f "$HC_OPTIONS" ]] || return 0
+  jq -r --arg re "$re" '.assistant_env[]? | strings | select(test($re))' "$HC_OPTIONS" 2>/dev/null
+  while IFS= read -r name; do
+    log "options: ignoring assistant_env entry '$name'"
+  done < <(jq -r --arg re "$re" \
+            '.assistant_env[]? | strings | select(test($re) | not) | capture("\\A(?<n>[A-Za-z0-9_]*)").n' \
+            "$HC_OPTIONS" 2>/dev/null)
+  return 0
+}
+
 claude_env() {
   printf '%s\n' \
     "HOME=$HC_HOME" \
@@ -22,6 +40,7 @@ claude_env() {
     "TZ=${TZ:-UTC}" \
     "HC_DATA=$HC_DATA" \
     "DISABLE_AUTOUPDATER=1"
+  assistant_env 2>/dev/null
 }
 
 as_claude() {

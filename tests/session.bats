@@ -46,9 +46,19 @@ load helpers
 }
 
 @test "start_chat hands the session name from the options to the chat session" {
-  load_lib options session
+  load_lib options env session
   set_options '{"session_name":"Office"}'
   as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
   start_chat
   grep -q -- "-e HC_SESSION_NAME=Office" "$BATS_TEST_TMPDIR/as_claude"
+}
+
+@test "start_chat hands the assistant's variables to the chat session" {
+  load_lib options env session
+  set_options '{"session_name":"Office","assistant_env":["ASSISTANT_ONE=1","PATH=/tmp/evil"]}'
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
+  start_chat
+  grep -q -- "-e ASSISTANT_ONE=1" "$BATS_TEST_TMPDIR/as_claude"
+  run grep -- "PATH=/tmp/evil" "$BATS_TEST_TMPDIR/as_claude"
+  [ "$status" -eq 1 ]
 }

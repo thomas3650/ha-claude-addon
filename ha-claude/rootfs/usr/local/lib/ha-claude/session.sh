@@ -30,10 +30,16 @@ chat_alive() {
 }
 
 start_chat() {
+  local entry
+  local -a extra=()
   chat_alive && return 0
   log "chat: starting a new session"
+  while IFS= read -r entry; do
+    extra+=(-e "$entry")
+  done < <(assistant_env)
   as_claude tmux -L "$HC_TMUX_SOCKET" new-session -d -s "$HC_TMUX_SESSION" \
     -e "HC_SESSION_NAME=$(opt '.session_name' 'Home')" \
+    "${extra[@]}" \
     -c "$HC_WORKSPACE" /usr/local/bin/ha-claude-chat
 }
 
