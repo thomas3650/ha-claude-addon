@@ -25,9 +25,12 @@ backup_exclude:
 options:
   session_name: Home
   extra_packages: []
+  assistant_env: []
 schema:
   session_name: str
   repo_url: str?
   deploy_key: password?
   extra_packages:
     - str
+  assistant_env:
+    - "match(^ASSISTANT_[A-Z0-9_]+=.*$)"

@@ -8,3 +8,4 @@
 : "${HC_STATE:=$HC_DATA/state}"
 : "${HC_STATUS:=$HC_DATA/status}"
 : "${HC_USER:=claude}"
+: "${HC_MANAGED_DIR:=/etc/claude-code}"
