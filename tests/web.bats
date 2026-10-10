@@ -155,7 +155,7 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   load_lib web
   curl() {
     if [[ "$*" == *tools/list* ]]; then
-      printf '%s' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"HassTurnOn","description":"secret words"},{"name":"GetLiveContext"},{"name":"bad name; rm"}]}}'
+      printf '%s' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"HassTurnOn","description":"secret words"},{"name":"GetLiveContext"},{"name":"bad name; rm"},{"name":"two\\nlines"},{"name":7}]}}'
     else
       printf '200'
     fi
@@ -164,7 +164,9 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   [[ "$output" == *"answered 200 through the listener"* ]]
   [[ "$output" == *"proxy: Home Assistant offers these tools: HassTurnOn GetLiveContext"* ]]
   [[ "$output" != *"secret words"* ]]
+  [[ "$output" == *"offers these tools: HassTurnOn GetLiveContext" ]]
   [[ "$output" != *"rm"* ]]
+  [[ "$output" != *"lines"* ]]
 }
 
 @test "an answer sent as an event stream is read too, and no tool list is asked for after an error" {
@@ -177,7 +179,7 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
     fi
   }
   run check_proxy
-  [[ "$output" == *"offers these tools: HassTurnOff"* ]]
+  [[ "$output" == *"offers these tools: HassTurnOff" ]]
   curl() { [[ "$*" != *tools/list* ]] || echo asked >> "$BATS_TEST_TMPDIR/asked"; printf '404'; }
   run check_proxy
   [ ! -e "$BATS_TEST_TMPDIR/asked" ]

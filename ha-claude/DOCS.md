@@ -121,8 +121,10 @@ listener`:
 | 502 | Home Assistant could not be reached |
 | `nothing` | No answer within fifteen seconds |
 
-When it works, the next line lists the names of the tools Home Assistant
-offers, as `proxy: Home Assistant offers these tools: ...`. In Claude Code a
+When it works, a later line lists the names of the tools Home Assistant
+offers, as `proxy: Home Assistant offers these tools: ...`. A script you
+have exposed is offered as a tool under its own name, so that name is in
+the log too. In Claude Code a
 tool is called `mcp__<server>__<name>`, with the server's name from
 `.mcp.json`; permission rules and an agent's tool list use that form.
 

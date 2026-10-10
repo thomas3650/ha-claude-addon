@@ -67,15 +67,16 @@ _proxy_post() {
 # What the codes mean is in DOCS.md. When Home Assistant answers, the names
 # of the tools it offers are logged as well, since permission rules are
 # written by tool name. Nothing else of an answer is logged, and a name is
-# logged only when it is made of letters, digits, "_" and "-".
+# logged only when it is made of letters, digits, "_" and "-". A script
+# that is exposed is offered as a tool under its own name.
 check_proxy() {
   local code="" names=""
   code="$(_proxy_post ping -o /dev/null -w '%{http_code}')" || code=""
   log "proxy: Home Assistant answered ${code:-nothing} through the listener"
   [[ "$code" == 2* ]] || return 0
-  names="$(_proxy_post tools/list | sed -n -e 's/^data: //p' -e '/^{/p' \
-            | jq -r '.result.tools[]?.name // empty' 2>/dev/null \
-            | grep -E '^[A-Za-z0-9_-]+$' | tr '\n' ' ')" || names=""
-  [[ -n "$names" ]] && log "proxy: Home Assistant offers these tools: ${names% }"
+  names="$(_proxy_post tools/list | sed -n -e 's/^data: \{0,1\}//' -e '/^{/p' \
+            | jq -r '[.result.tools[]?.name? | strings | select(test("^[A-Za-z0-9_-]{1,64}$"))] | .[:80] | join(" ")' 2>/dev/null \
+            | head -n 1 | grep -E '^[A-Za-z0-9_ -]+$')" || names=""
+  [[ -n "$names" ]] && log "proxy: Home Assistant offers these tools: $names"
   return 0
 }
