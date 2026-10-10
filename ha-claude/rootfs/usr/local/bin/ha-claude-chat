@@ -17,6 +17,8 @@ while true; do
 
   1. Run:  claude
   2. Follow the login link and accept the prompts it shows.
+     The link is longer than one line: copy all of it and take out the
+     line breaks before opening it.
   3. Exit Claude, then run:  exit
      The add-on starts the chat session within a minute.
 

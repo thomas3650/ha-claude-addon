@@ -45,6 +45,18 @@ docker exec "$name" runuser -u claude -- touch /data/workspace/assistant/x 2>/de
 docker exec "$name" runuser -u claude -- ls /data/state >/dev/null 2>&1 && fail "state is readable by claude"
 docker exec "$name" runuser -u claude -- touch /data/handover/ok || fail "handover is not writable by claude"
 
+# A session started from the web terminal is logged in the add-on's log.
+# Without a terminal the attach itself fails; the start before it is the test.
+docker exec "$name" bash -c 'runuser -u claude -- tmux -L hc kill-server; /usr/local/bin/ha-claude-attach' >/dev/null 2>&1 || true
+grep -q "web terminal: no chat session, starting one" <<<"$(logs)" \
+  || fail "a session started from the web terminal was not logged"
+docker exec "$name" pgrep -u claude tmux >/dev/null || fail "the web terminal did not start the chat session"
+
+# A second tmux window gives the Claude user a shell beside Claude Code.
+window="$(docker exec "$name" runuser -u claude -- tmux -L hc new-window -d -P -F '#{pane_current_command}')" \
+  || fail "a second tmux window could not be opened"
+[[ "$window" == "bash" ]] || fail "the second tmux window runs '$window', not a shell"
+
 # Commands on standard input: unknown is ignored, ping is handled.
 # KILL, because the Docker client does not exit on a single TERM.
 printf '"nonsense"\n"ping"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true

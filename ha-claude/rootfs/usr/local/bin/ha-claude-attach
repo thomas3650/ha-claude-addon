@@ -5,5 +5,12 @@ for f in paths log options env session; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
-chat_alive || start_chat
+# This script's own output goes to the browser; the add-on's log is the
+# standard error of the container's first process.
+if ! chat_alive; then
+  export HC_LOG=/proc/1/fd/2
+  log "web terminal: no chat session, starting one"
+  start_chat
+  unset HC_LOG
+fi
 as_claude tmux -L "$HC_TMUX_SOCKET" attach -t "$HC_TMUX_SESSION"
