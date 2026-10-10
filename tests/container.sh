@@ -6,7 +6,7 @@ name="hc-smoke-$$"
 logs() { docker logs "$name" 2>&1; }
 fail() { echo "FAIL: $*" >&2; logs >&2 || true; docker rm -f "$name" >/dev/null 2>&1; exit 1; }
 
-docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all "$image" >/dev/null
+docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all -e HC_MCP_UPSTREAM=http://mcp.invalid/api/mcp "$image" >/dev/null
 
 for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
@@ -31,6 +31,30 @@ grep -q 'href="shell/"' <<<"$page" || fail "the page has no link to the shell"
 docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/claude/ || fail "the Claude terminal does not answer"
 docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/shell/ || fail "the shell terminal does not answer"
 docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/claude/token || fail "the Claude terminal's own addresses do not work under its path"
+
+# Claude's way to Home Assistant: one address, POST only. The upstream here
+# is a name that does not exist: nginx has started all the same, and a POST
+# is answered 502, which only a forwarded request gets. Anything the
+# listener does not forward is its own 404 or 405.
+code() { docker exec -u claude "$name" curl -s -m 20 -o /dev/null -w '%{http_code}' "$@"; }
+[[ "$(code -X POST http://127.0.0.1:7684/mcp)" == 502 ]] || fail "the listener did not try to forward a POST to its one address"
+[[ "$(code http://127.0.0.1:7684/mcp)" == 405 ]] || fail "the listener forwarded something other than a POST"
+[[ "$(code -X POST http://127.0.0.1:7684/mcp/x)" == 404 ]] || fail "the listener forwarded a second address"
+[[ "$(code -X POST http://127.0.0.1:7684/)" == 404 ]] || fail "the listener forwarded the root address"
+for _ in $(seq 1 20); do
+  grep -q "proxy: Home Assistant answered" <<<"$(logs)" && break
+  sleep 1
+done
+grep -q "proxy: Home Assistant answered 502 through the listener" <<<"$(logs)" || fail "the check at start did not log the answer"
+
+# The token is in a file the Claude user cannot read, and not in the
+# configuration, which it can.
+docker exec "$name" grep -q 'Bearer smoke-secret' /run/ha-claude/proxy-auth.conf || fail "the token file does not hold the token"
+docker exec -u claude "$name" cat /run/ha-claude/proxy-auth.conf >/dev/null 2>&1 && fail "the Claude user can read the token file"
+conf="$(docker exec -u claude "$name" cat /etc/nginx/nginx.conf)" || fail "the Claude user cannot read the nginx configuration"
+grep -q 'mcp_upstream' <<<"$conf" || fail "the nginx configuration has no upstream"
+if grep -q 'smoke-secret' <<<"$conf"; then fail "the token is in a file the Claude user can read"; fi
+docker exec -u claude "$name" nginx -T >/dev/null 2>&1 && fail "the Claude user can have nginx print its configuration"
 
 # The shell behind the second link runs as the Claude user, without the token.
 who="$(docker exec "$name" /usr/local/bin/ha-claude-shell -c 'id -un; env | grep -c SUPERVISOR')" || true
@@ -115,6 +139,27 @@ done
 [[ "$(logs | grep -c '\] ready$')" -ge 2 ]] || fail "the add-on did not log ready after the restart"
 docker exec "$name" test ! -e /data/handover/1999-01-01.md || fail "an old handover file survived a restart"
 docker exec "$name" test -e /data/handover/keep.md || fail "retention removed a file that is not a handover file"
+
+docker rm -f "$name" >/dev/null
+
+# What the listener sends on: a second container whose upstream is a
+# stand-in that answers with the method, the address and the token it got.
+# The token is the add-on's also when the client sent another, and the
+# client's query string is dropped.
+docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all \
+  -e HC_MCP_UPSTREAM=http://127.0.0.1:7690/core/api/mcp "$image" >/dev/null
+for _ in $(seq 1 30); do
+  grep -q "ready" <<<"$(logs)" && break
+  sleep 1
+done
+docker exec -d "$name" node -e 'require("http").createServer((q, s) => s.end(q.method + " " + q.url + " " + (q.headers.authorization || "none"))).listen(7690, "127.0.0.1")'
+sent=""
+for _ in $(seq 1 10); do
+  sent="$(docker exec -u claude "$name" curl -s -m 10 -X POST -H 'Authorization: Bearer other' -d '{}' 'http://127.0.0.1:7684/mcp?x=1')" || true
+  [[ "$sent" == POST* ]] && break
+  sleep 1
+done
+[[ "$sent" == "POST /core/api/mcp Bearer smoke-secret" ]] || fail "the listener sent on '$sent'"
 
 docker rm -f "$name" >/dev/null
 echo "container smoke test passed"

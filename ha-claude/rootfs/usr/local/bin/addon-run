@@ -4,7 +4,7 @@
 set -uo pipefail
 
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env layout sync managed retention diagnostics session outcome morning commands; do
+for f in paths log options env layout sync managed retention diagnostics web session outcome morning commands; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -20,10 +20,8 @@ install_extra_packages() {
 }
 
 start_ingress() {
-  local allow="allow 172.30.32.2; deny all;"
-  # HC_INGRESS_ALLOW=all is for the container smoke test only.
-  [[ "${HC_INGRESS_ALLOW:-}" == "all" ]] && allow=""
-  sed "s/__ALLOW__/$allow/" /etc/nginx/templates/ingress.conf.tpl > /etc/nginx/nginx.conf
+  write_proxy_auth
+  render_nginx_conf /etc/nginx/templates/ingress.conf.tpl > /etc/nginx/nginx.conf
   nginx
   ttyd -i lo -p 7682 -W /usr/local/bin/ha-claude-attach >/dev/null 2>&1 &
   ttyd -i lo -p 7683 -W /usr/local/bin/ha-claude-shell >/dev/null 2>&1 &
@@ -47,6 +45,7 @@ sync_workspace
 ensure_layout
 install_managed_settings
 start_ingress
+check_proxy &
 start_chat
 logged_in || log "Claude Code is not logged in: open the add-on's web terminal and follow the steps shown"
 prune_handover

@@ -33,4 +33,25 @@ http {
       proxy_read_timeout 86400s;
     }
   }
+  # Claude's way to Home Assistant. It listens on the container's own
+  # loopback, forwards one address to Home Assistant's MCP Server endpoint
+  # and adds the token Home Assistant gave the add-on, which Claude never
+  # sees. The upstream is a variable, so its name is looked up for each
+  # request and not when nginx starts.
+  server {
+    listen 127.0.0.1:7684;
+    resolver __RESOLVER__ valid=30s ipv6=off;
+    resolver_timeout 5s;
+    location = /mcp {
+      if ($request_method != POST) { return 405; }
+      set $mcp_upstream "__UPSTREAM__";
+      proxy_pass $mcp_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
+      include __AUTH__;
+      proxy_buffering off;
+      proxy_read_timeout 120s;
+    }
+    location / { return 404; }
+  }
 }
