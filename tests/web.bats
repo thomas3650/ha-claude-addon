@@ -144,3 +144,42 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   run check_proxy
   [[ "$output" == *"answered nothing"* ]]
 }
+
+@test "the terminals are not buffered, so nginx writes no temporary files for them" {
+  for where in /claude/ /shell/; do
+    sed -n "\\|location $where {|,/}/p" "$CONF" | grep -q 'proxy_buffering off;'
+  done
+}
+
+@test "when Home Assistant answers, the names of the tools it offers are logged, and nothing else" {
+  load_lib web
+  curl() {
+    if [[ "$*" == *tools/list* ]]; then
+      printf '%s' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"HassTurnOn","description":"secret words"},{"name":"GetLiveContext"},{"name":"bad name; rm"}]}}'
+    else
+      printf '200'
+    fi
+  }
+  run check_proxy
+  [[ "$output" == *"answered 200 through the listener"* ]]
+  [[ "$output" == *"proxy: Home Assistant offers these tools: HassTurnOn GetLiveContext"* ]]
+  [[ "$output" != *"secret words"* ]]
+  [[ "$output" != *"rm"* ]]
+}
+
+@test "an answer sent as an event stream is read too, and no tool list is asked for after an error" {
+  load_lib web
+  curl() {
+    if [[ "$*" == *tools/list* ]]; then
+      printf 'event: message\ndata: {"result":{"tools":[{"name":"HassTurnOff"}]}}\n\n'
+    else
+      printf '200'
+    fi
+  }
+  run check_proxy
+  [[ "$output" == *"offers these tools: HassTurnOff"* ]]
+  curl() { [[ "$*" != *tools/list* ]] || echo asked >> "$BATS_TEST_TMPDIR/asked"; printf '404'; }
+  run check_proxy
+  [ ! -e "$BATS_TEST_TMPDIR/asked" ]
+  [[ "$output" != *"offers"* ]]
+}

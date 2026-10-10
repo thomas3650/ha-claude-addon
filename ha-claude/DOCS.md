@@ -49,7 +49,8 @@ Send one of these with Home Assistant's add-on stdin action:
 | `morning` | Runs the morning briefing, then starts a new chat session. See below |
 
 Every command raises the event `ha_claude_outcome` with `command` and
-`outcome` in its data.
+`outcome` in its data. For `sync` and `restart-chat` the outcome is `ok`, or
+`failed` when no chat session could be started.
 
 ## The morning run
 
@@ -119,6 +120,11 @@ listener`:
 | 401 | Home Assistant refused the token |
 | 502 | Home Assistant could not be reached |
 | `nothing` | No answer within fifteen seconds |
+
+When it works, the next line lists the names of the tools Home Assistant
+offers, as `proxy: Home Assistant offers these tools: ...`. In Claude Code a
+tool is called `mcp__<server>__<name>`, with the server's name from
+`.mcp.json`; permission rules and an agent's tool list use that form.
 
 ## Is it working?
 

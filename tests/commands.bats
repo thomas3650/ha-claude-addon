@@ -170,3 +170,20 @@ EOT
   run grep "finished" "$BATS_TEST_TMPDIR/out"
   [ "$status" -eq 1 ]
 }
+
+@test "sync and restart-chat report failed when no chat session could be started" {
+  load_lib morning commands; stub_actions
+  restart_chat() { echo "restart" >> "$CALLS"; return 1; }
+  handle_command 'sync'
+  handle_command 'restart-chat'
+  [ "$(grep -c 'outcome sync failed' "$CALLS")" -eq 1 ]
+  [ "$(grep -c 'outcome restart-chat failed' "$CALLS")" -eq 1 ]
+}
+
+@test "a morning run keeps its outcome when the new chat session could not be started, and says so" {
+  load_lib morning commands; stub_actions
+  restart_chat() { return 1; }
+  run handle_command 'morning'
+  [[ "$output" == *"no chat session"* ]]
+  [ "$(tail -1 "$CALLS")" = "outcome morning ok" ]
+}
