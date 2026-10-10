@@ -24,8 +24,17 @@ status="$(docker exec -u claude "$name" ha-claude-status)"
 grep -q "chat session: running" <<<"$status" || fail "the Claude user does not see the chat session"
 grep -q "last sync: never (none)" <<<"$status" || fail "the Claude user cannot read the sync status"
 
-# Ingress answers.
-docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/ || fail "nginx does not answer on 7681"
+# Ingress answers: the page with its two links, and a terminal behind each.
+page="$(docker exec "$name" curl -fsS http://127.0.0.1:7681/)" || fail "nginx does not answer on 7681"
+grep -q 'href="claude/"' <<<"$page" || fail "the page has no link to Claude"
+grep -q 'href="shell/"' <<<"$page" || fail "the page has no link to the shell"
+docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/claude/ || fail "the Claude terminal does not answer"
+docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/shell/ || fail "the shell terminal does not answer"
+docker exec "$name" curl -fsS -o /dev/null http://127.0.0.1:7681/claude/token || fail "the Claude terminal's own addresses do not work under its path"
+
+# The shell behind the second link runs as the Claude user, without the token.
+who="$(docker exec "$name" /usr/local/bin/ha-claude-shell -c 'id -un; env | grep -c SUPERVISOR')" || true
+[[ "$who" == $'claude\n0' ]] || fail "the web terminal's shell is not a clean shell for the Claude user: '$who'"
 
 # Nothing owned by the Claude user can see the Supervisor token.
 # Read as the Claude user: root in a container may not read another user's
@@ -51,11 +60,6 @@ docker exec "$name" bash -c 'runuser -u claude -- tmux -L hc kill-server; /usr/l
 grep -q "web terminal: no chat session, starting one" <<<"$(logs)" \
   || fail "a session started from the web terminal was not logged"
 docker exec "$name" pgrep -u claude tmux >/dev/null || fail "the web terminal did not start the chat session"
-
-# A second tmux window gives the Claude user a shell beside Claude Code.
-window="$(docker exec "$name" runuser -u claude -- tmux -L hc new-window -d -P -F '#{pane_current_command}')" \
-  || fail "a second tmux window could not be opened"
-[[ "$window" == "bash" ]] || fail "the second tmux window runs '$window', not a shell"
 
 # Managed settings: a file in the working folder is installed by the sync
 # command, readable by the Claude user and not writable by it.

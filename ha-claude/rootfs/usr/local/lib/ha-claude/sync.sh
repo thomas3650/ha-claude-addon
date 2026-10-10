@@ -7,6 +7,25 @@ _sync_status() {
   printf '%s\n' "$1" > "$HC_STATUS/last_sync_status"
 }
 
+# Prints a private key given as text with its line breaks restored. A
+# one-line field turns the line breaks into spaces or drops them, and may add
+# carriage returns; the key is then not readable. The body of a key holds no
+# white space of its own, so it is joined and folded again.
+_key_text() {
+  local raw="$1" body
+  if [[ "$raw" =~ ^[[:space:]]*(-----BEGIN[A-Z\ ]+-----)(.*)(-----END[A-Z\ ]+-----)[[:space:]]*$ ]]; then
+    body="${BASH_REMATCH[2]//[[:space:]]/}"
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    while [[ -n "$body" ]]; do
+      printf '%s\n' "${body:0:70}"
+      body="${body:70}"
+    done
+    printf '%s\n' "${BASH_REMATCH[3]}"
+  else
+    printf '%s\n' "$raw"
+  fi
+}
+
 # Writes the deploy key from the options to HC_STATE/deploy_key.
 # Accepts the key as text or base64-encoded. Returns 1 if empty, 2 if invalid.
 # A key with a passphrase counts as invalid: nobody is there to type it.
@@ -18,7 +37,7 @@ _write_deploy_key() {
   mkdir -p "$HC_STATE"
   ( umask 077
     if [[ "$raw" == *"BEGIN"* ]]; then
-      printf '%s\n' "$raw" > "$key"
+      _key_text "$raw" > "$key"
     else
       printf '%s' "$raw" | base64 -d > "$key" 2>/dev/null || true
     fi )

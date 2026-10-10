@@ -120,3 +120,58 @@ make_fixture_repo() {
   [[ "$output" == *"ConnectTimeout=15"* ]]
   [[ "$output" == *"-i $HC_STATE/deploy_key"* ]]
 }
+
+make_key() {
+  KEYFILE="$BATS_TEST_TMPDIR/k"
+  ssh-keygen -q -t ed25519 -N "" -f "$KEYFILE"
+}
+
+@test "a key pasted into a one-line field, line breaks turned to spaces, is accepted" {
+  load_lib options sync
+  make_key
+  mangled="$(tr '\n' ' ' < "$KEYFILE")"
+  set_options "$(jq -cn --arg k "$mangled" '{deploy_key:$k}')"
+  run _write_deploy_key
+  [ "$status" -eq 0 ]
+  ssh-keygen -y -P '' -f "$HC_STATE/deploy_key" </dev/null >/dev/null
+}
+
+@test "a key pasted with its line breaks removed is accepted" {
+  load_lib options sync
+  make_key
+  mangled="$(tr -d '\n' < "$KEYFILE")"
+  set_options "$(jq -cn --arg k "$mangled" '{deploy_key:$k}')"
+  run _write_deploy_key
+  [ "$status" -eq 0 ]
+  ssh-keygen -y -P '' -f "$HC_STATE/deploy_key" </dev/null >/dev/null
+}
+
+@test "a key pasted as it is, with line breaks, is still accepted" {
+  load_lib options sync
+  make_key
+  set_options "$(jq -cn --arg k "$(cat "$KEYFILE")" '{deploy_key:$k}')"
+  run _write_deploy_key
+  [ "$status" -eq 0 ]
+  ssh-keygen -y -P '' -f "$HC_STATE/deploy_key" </dev/null >/dev/null
+}
+
+@test "a key pasted with carriage returns is accepted" {
+  load_lib options sync
+  make_key
+  mangled="$(sed 's/$/\r/' "$KEYFILE" | tr '\n' ' ')"
+  set_options "$(jq -cn --arg k "$mangled" '{deploy_key:$k}')"
+  run _write_deploy_key
+  [ "$status" -eq 0 ]
+  ssh-keygen -y -P '' -f "$HC_STATE/deploy_key" </dev/null >/dev/null
+}
+
+@test "a restored key has no line longer than 70 characters in its body" {
+  load_lib options sync
+  make_key
+  run _key_text "$(tr -d '\n' < "$KEYFILE")"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "-----BEGIN OPENSSH PRIVATE KEY-----" ]
+  for line in "${lines[@]}"; do
+    [[ "$line" == -----* ]] || [ "${#line}" -le 70 ]
+  done
+}

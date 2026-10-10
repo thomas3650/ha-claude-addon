@@ -26,6 +26,7 @@ start_ingress() {
   sed "s/__ALLOW__/$allow/" /etc/nginx/templates/ingress.conf.tpl > /etc/nginx/nginx.conf
   nginx
   ttyd -i lo -p 7682 -W /usr/local/bin/ha-claude-attach >/dev/null 2>&1 &
+  ttyd -i lo -p 7683 -W /usr/local/bin/ha-claude-shell >/dev/null 2>&1 &
 }
 
 shutdown() {
