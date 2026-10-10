@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.7.0...v0.8.0) (2026-10-10)
+
+
+### Features
+
+* log the names of the tools Home Assistant offers ([#19](https://github.com/thomas3650/ha-claude-addon/issues/19)) ([6d236b7](https://github.com/thomas3650/ha-claude-addon/commit/6d236b7af1b6587cfbc2b1be5563508972959484))
+
 ## [0.7.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.6.0...v0.7.0) (2026-10-10)
 
 
