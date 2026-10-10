@@ -175,3 +175,30 @@ make_key() {
     [[ "$line" == -----* ]] || [ "${#line}" -le 70 ]
   done
 }
+
+@test "sync says in HC_SYNC_RESULT whether the working folder is new, kept, or not configured" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  [ "$HC_SYNC_RESULT" = "ok" ]
+  set_options '{"repo_url":"file:///nonexistent/repo"}'
+  sync_workspace 2>/dev/null
+  [ "$HC_SYNC_RESULT" = "kept" ]
+  set_options '{}'
+  sync_workspace 2>/dev/null
+  [ "$HC_SYNC_RESULT" = "none" ]
+}
+
+@test "the host keys of GitHub come with the add-on, and a changed key there is refused" {
+  load_lib options sync
+  hosts="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/share/ha-claude/known_hosts"
+  [ "$(grep -c '^github.com ' "$hosts")" -eq 3 ]
+  grep -q '^github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl$' "$hosts"
+  cmd="$(_git_ssh_command)"
+  [[ "$cmd" == *"UserKnownHostsFile=$HC_KNOWN_HOSTS $HC_STATE/known_hosts'"* ]]
+  [[ "$cmd" == *"StrictHostKeyChecking=accept-new"* ]]
+  [[ "$cmd" != *"StrictHostKeyChecking=no"* ]]
+}
+

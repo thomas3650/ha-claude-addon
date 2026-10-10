@@ -37,6 +37,10 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `morning_timeout` | The longest a morning run may take, in seconds. |
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 
+The add-on comes with GitHub's SSH host keys, so a server that answers for
+`github.com` with another key is refused. The key of any other host is
+remembered the first time it is seen.
+
 ## Commands
 
 Send one of these with Home Assistant's add-on stdin action:
@@ -49,8 +53,12 @@ Send one of these with Home Assistant's add-on stdin action:
 | `morning` | Runs the morning briefing, then starts a new chat session. See below |
 
 Every command raises the event `ha_claude_outcome` with `command` and
-`outcome` in its data. For `sync` and `restart-chat` the outcome is `ok`, or
-`failed` when no chat session could be started.
+`outcome` in its data. For `restart-chat` the outcome is `ok`, or `failed`
+when no chat session could be started. For `sync` it is `ok` when the
+working folder was renewed, `kept` when the repo could not be fetched and
+the previous working folder stays in use, and `failed` when no chat session
+could be started. After `kept`, the add-on's log and `ha-claude-status` say
+why.
 
 ## The morning run
 
@@ -134,6 +142,10 @@ Run `ha-claude-status` in the panel, under the link **Shell**. It shows whether 
 session is running, whether Claude is logged in, and when the working folder
 last synced.
 
+`claude login: yes` means only that a login has been stored. A login that
+has expired or been withdrawn still shows `yes`; the **Claude** link then
+shows Claude Code asking you to log in, and `/login` there does it.
+
 ## A shell in the panel
 
 The panel has two links at the top: **Claude** shows Claude Code's session,
@@ -157,4 +169,8 @@ installed; the last good one stays, and the log says so.
 
 The handover folder, `/data/handover`, is the one place outside its home
 where Claude can write. Files named `YYYY-MM-DD.md` there are deleted once
-their date is more than 30 days ago. Nothing else in that folder is touched.
+their date is more than 30 days ago. Files that Claude Code could read as
+instructions or settings (`CLAUDE.md`, `CLAUDE.local.md`, `.claude`,
+`.mcp.json`, in any case and at any depth) are removed from that folder
+whenever a chat session or a morning run starts, and the log says so.
+Nothing else in that folder is touched.

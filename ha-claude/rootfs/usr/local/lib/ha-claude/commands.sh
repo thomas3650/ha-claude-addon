@@ -57,10 +57,12 @@ handle_command() {
       sync_workspace
       ensure_layout
       install_managed_settings
-      if restart_chat; then
-        raise_outcome sync ok
-      else
+      if ! restart_chat; then
         raise_outcome sync failed
+      elif [[ "${HC_SYNC_RESULT:-ok}" == kept ]]; then
+        raise_outcome sync kept
+      else
+        raise_outcome sync ok
       fi
       ;;
     restart-chat)

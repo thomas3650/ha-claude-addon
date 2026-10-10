@@ -48,8 +48,12 @@ _write_deploy_key() {
 }
 
 # ssh never asks a question and gives up on a network that does not answer.
+# The host keys of GitHub come with the add-on, so a server that answers for
+# github.com with another key is refused, also on the first connection. The
+# key of any other host is remembered the first time it is seen.
+: "${HC_KNOWN_HOSTS:=/usr/share/ha-claude/known_hosts}"
 _git_ssh_command() {
-  printf '%s' "ssh -i $HC_STATE/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$HC_STATE/known_hosts"
+  printf '%s' "ssh -i $HC_STATE/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o 'UserKnownHostsFile=$HC_KNOWN_HOSTS $HC_STATE/known_hosts'"
 }
 
 _fetch_repo() {
@@ -74,13 +78,20 @@ _publish_workspace() {
   rm -rf "$old"
 }
 
+# After a call HC_SYNC_RESULT says what happened: "ok" (the working folder is
+# new), "kept" (it could not be renewed and the previous one stays) or
+# "none" (no repo is configured).
+# shellcheck disable=SC2034  # read by the command handler
+HC_SYNC_RESULT=""
 sync_workspace() {
   local url rc
+  HC_SYNC_RESULT=kept
   url="$(opt '.repo_url')"
   mkdir -p "$HC_WORKSPACE"
   if [[ -z "$url" ]]; then
     log "sync: no repo_url set; the workspace is left as it is"
     _sync_status none
+    HC_SYNC_RESULT=none
     return 0
   fi
   if [[ "$url" != file://* ]]; then
@@ -109,5 +120,7 @@ sync_workspace() {
   fi
   date -u +%Y-%m-%dT%H:%M:%SZ > "$HC_STATUS/last_sync"
   _sync_status ok
+  # shellcheck disable=SC2034
+  HC_SYNC_RESULT=ok
   log "sync: workspace updated"
 }

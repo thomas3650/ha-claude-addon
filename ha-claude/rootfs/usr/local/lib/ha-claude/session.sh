@@ -45,6 +45,7 @@ start_chat() {
   local entry prompt="${1:-}" try
   local -a extra=()
   [[ -z "$prompt" ]] && chat_alive && return 0
+  declare -F clean_handover >/dev/null && clean_handover
   log "chat: starting a new session"
   while IFS= read -r entry; do
     extra+=(-e "$entry")

@@ -70,3 +70,17 @@ retention_setup() {
   HC_HANDOVER_DAYS=soon run prune_handover
   [ -e "$old" ]
 }
+
+@test "files that Claude Code could read as instructions are removed from the handover folder, and nothing else" {
+  load_lib retention
+  mkdir -p "$HC_HANDOVER/.claude/rules" "$HC_HANDOVER/sub"
+  touch "$HC_HANDOVER/CLAUDE.md" "$HC_HANDOVER/claude.local.md" "$HC_HANDOVER/.mcp.json" \
+        "$HC_HANDOVER/.claude/rules/x.md" "$HC_HANDOVER/sub/CLAUDE.md" \
+        "$HC_HANDOVER/2026-10-10.md" "$HC_HANDOVER/notes.md"
+  run clean_handover
+  [[ "$output" == *"removed 5"* ]]
+  [ "$(cd "$HC_HANDOVER" && find . -mindepth 1 | sort | tr '\n' ' ')" = "./2026-10-10.md ./notes.md ./sub " ]
+  run clean_handover
+  [ -z "$output" ]
+}
+

@@ -23,3 +23,20 @@ prune_handover() {
   fi
   return 0
 }
+
+# The handover folder is the one place Claude can write. Nothing that Claude
+# Code would read as instructions or settings belongs there, so such files
+# are removed before a session or a run starts. Names are matched without
+# regard to case.
+clean_handover() {
+  local found removed=0
+  [[ -d "$HC_HANDOVER" ]] || return 0
+  while IFS= read -r -d '' found; do
+    rm -rf "$found" && removed=$((removed + 1))
+  done < <(find "$HC_HANDOVER" -mindepth 1 \( -iname CLAUDE.md -o -iname CLAUDE.local.md \
+             -o -iname .claude -o -iname .mcp.json \) -prune -print0 2>/dev/null)
+  if (( removed )); then
+    log "handover: removed $removed file(s) that could be read as instructions"
+  fi
+  return 0
+}
