@@ -45,12 +45,6 @@ read_command() {
   return 1
 }
 
-# A morning lock that survived a crash or a restart would refuse every later
-# morning command. Called once at start-up, before any command is read.
-clear_stale_locks() {
-  rmdir "$HC_STATE/morning.lock" 2>/dev/null || true
-}
-
 handle_command() {
   local word
   mkdir -p "$HC_STATE"
@@ -71,14 +65,13 @@ handle_command() {
       raise_outcome restart-chat ok
       ;;
     morning)
-      if ! mkdir "$HC_STATE/morning.lock" 2>/dev/null; then
-        log "commands: a morning run is already in progress"
-        raise_outcome morning busy
-        return 0
-      fi
-      # Not implemented yet.
-      rmdir "$HC_STATE/morning.lock"
-      raise_outcome morning not_implemented
+      # The run is waited for here: until it has ended, no other command is
+      # handled, so a second "morning" runs after the first one.
+      local outcome=failed
+      log "commands: the morning run starts"
+      run_morning outcome
+      [[ "$outcome" == not_configured ]] || restart_chat "$(opening_prompt "$outcome")"
+      raise_outcome morning "$outcome"
       ;;
     "")
       [[ -n "${1//[[:space:]]/}" ]] && log "commands: ignoring malformed command"

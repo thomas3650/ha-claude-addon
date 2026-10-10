@@ -4,7 +4,7 @@
 set -uo pipefail
 
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env layout sync managed retention diagnostics session outcome commands; do
+for f in paths log options env layout sync managed retention diagnostics session outcome morning commands; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -32,6 +32,8 @@ start_ingress() {
 shutdown() {
   log "stopping"
   as_claude tmux -L "$HC_TMUX_SOCKET" kill-server 2>/dev/null || true
+  # A morning run in progress, and anything else the Claude user runs.
+  pkill -TERM -u "$HC_USER" 2>/dev/null || true
   nginx -s quit 2>/dev/null || true
   exit 0
 }
@@ -46,7 +48,6 @@ ensure_layout
 install_managed_settings
 start_ingress
 start_chat
-clear_stale_locks
 logged_in || log "Claude Code is not logged in: open the add-on's web terminal and follow the steps shown"
 prune_handover
 pruned="$(date +%F)"

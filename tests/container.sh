@@ -85,6 +85,22 @@ grep -q "ignoring unknown command" <<<"$(logs)" || fail "unknown command was not
 grep -q "outcome: ping=ok" <<<"$(logs)" || fail "ping was not handled"
 docker inspect -f '{{.State.Running}}' "$name" | grep -q true || fail "the add-on stopped"
 
+# The morning command: with the agent in place and nobody logged in, the run
+# fails or is stopped, the outcome is reported, the chat session is started
+# again, and what the run printed is out of the Claude user's reach.
+docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude/agents && touch /data/workspace/assistant/.claude/agents/morning-briefing.md && echo "{\"morning_timeout\":20}" > /data/options.json'
+starts_before="$(logs | grep -c 'chat: starting a new session')"
+printf '"morning"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 90); do
+  grep -q "outcome: morning=" <<<"$(logs)" && break
+  sleep 1
+done
+grep -q -E "outcome: morning=(failed|timeout)" <<<"$(logs)" || fail "the morning command did not report failed or timeout"
+docker exec "$name" test -f /data/state/morning.log || fail "the morning run's output was not kept"
+docker exec "$name" runuser -u claude -- cat /data/state/morning.log >/dev/null 2>&1 && fail "the Claude user can read the morning run's output"
+[[ "$(logs | grep -c 'chat: starting a new session')" -gt "$starts_before" ]] || fail "no new chat session after the morning command"
+docker exec "$name" pgrep -u claude tmux >/dev/null || fail "no chat session after the morning command"
+
 # Retention: a handover file dated long ago is gone after a restart.
 docker exec "$name" runuser -u claude -- touch /data/handover/1999-01-01.md /data/handover/keep.md
 docker restart "$name" >/dev/null
