@@ -114,3 +114,12 @@ load helpers
   [ "$(grep -c -- "new-session" "$BATS_TEST_TMPDIR/as_claude")" -eq 2 ]
   [[ "$output" == *"could not be started"* ]]
 }
+
+@test "a new chat session starts from a handover folder with nothing that reads as instructions" {
+  load_lib options env retention session
+  mkdir -p "$HC_HANDOVER"; touch "$HC_HANDOVER/CLAUDE.md"
+  as_claude() { [[ "$*" != *has-session* ]]; }
+  start_chat 2>/dev/null
+  [ ! -e "$HC_HANDOVER/CLAUDE.md" ]
+}
+

@@ -187,3 +187,14 @@ EOT
   [[ "$output" == *"no chat session"* ]]
   [ "$(tail -1 "$CALLS")" = "outcome morning ok" ]
 }
+
+@test "sync reports kept when the repo could not be fetched and the old working folder stays" {
+  load_lib morning commands; stub_actions
+  sync_workspace() { HC_SYNC_RESULT=kept; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync kept" ]
+  sync_workspace() { HC_SYNC_RESULT=ok; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync ok" ]
+}
+

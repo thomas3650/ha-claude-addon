@@ -140,3 +140,13 @@ EOT
   [[ "$late" == *"took too long"* ]]
   [ "$ok" != "$failed" ]
 }
+
+@test "the morning run starts from a handover folder with nothing that reads as instructions" {
+  load_lib options env retention morning
+  stub_claude write
+  touch "$HC_HANDOVER/CLAUDE.md"
+  run_morning got 2>/dev/null
+  [ "$got" = "ok" ]
+  [ ! -e "$HC_HANDOVER/CLAUDE.md" ]
+}
+

@@ -36,6 +36,7 @@ run_morning() {
   _rm_limit="$(_morning_number '.morning_timeout' 900)"
   _rm_turns="$(_morning_number '.morning_max_turns' 40)"
   mkdir -p "$HC_STATE"
+  declare -F clean_handover >/dev/null && clean_handover
   : > "$_rm_marker"
   rm -f "$HC_STATE/morning.log"
   ( umask 077; : > "$HC_STATE/morning.log" )
