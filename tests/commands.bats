@@ -89,3 +89,51 @@ stub_actions() {
   handle_command 'morning'
   [ "$(cat "$CALLS")" = "outcome morning not_implemented" ]
 }
+
+@test "read_command returns a whole line" {
+  load_lib commands
+  read_command 2 got <<<'"ping"'
+  [ "$got" = '"ping"' ]
+}
+
+@test "a command that arrives in two parts across a timeout is put together" {
+  load_lib commands
+  exec 9< <(printf '"pi'; sleep 2; printf 'ng"\n'; sleep 1)
+  read_command 1 got <&9 && rc=0 || rc=$?
+  [ "$rc" -eq 2 ]
+  [ "$HC_PARTIAL" = '"pi' ]
+  read_command 4 got <&9
+  [ "$got" = '"ping"' ]
+  exec 9<&-
+}
+
+@test "a part whose rest never arrives is dropped after one quiet wait, with a log line" {
+  load_lib commands
+  exec 9< <(printf '"pi'; sleep 4)
+  read_command 1 got <&9 && rc=0 || rc=$?
+  [ "$HC_PARTIAL" = '"pi' ]
+  read_command 1 got <&9 2>"$BATS_TEST_TMPDIR/err" && rc=0 || rc=$?
+  [ "$rc" -eq 2 ]
+  [ -z "$HC_PARTIAL" ]
+  grep -q "dropping an unfinished command" "$BATS_TEST_TMPDIR/err"
+  exec 9<&-
+}
+
+@test "a command without a line ending is handled when standard input closes" {
+  load_lib commands
+  exec 9< <(printf 'ping')
+  read_command 2 got <&9
+  [ "$got" = 'ping' ]
+  read_command 1 got <&9 && rc=0 || rc=$?
+  [ "$rc" -eq 1 ]
+  exec 9<&-
+}
+
+@test "a timeout with nothing read reports a timeout and keeps nothing" {
+  load_lib commands
+  exec 9< <(sleep 3)
+  read_command 1 got <&9 && rc=0 || rc=$?
+  [ "$rc" -eq 2 ]
+  [ -z "$HC_PARTIAL" ]
+  exec 9<&-
+}

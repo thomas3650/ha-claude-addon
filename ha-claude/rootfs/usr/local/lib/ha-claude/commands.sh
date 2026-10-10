@@ -11,6 +11,40 @@ parse_command() {
   printf '%s' "$word"
 }
 
+# read_command <seconds> <variable> - reads one command from standard input
+# into the named variable, waiting at most the given number of seconds.
+# Returns 0 with a command, 2 on a timeout, and 1 when standard input is
+# closed. A line that has only partly arrived when the wait ends is kept and
+# completed by the next call, unless a whole wait passes without anything
+# new. A last line without a line ending is returned when standard input
+# closes.
+HC_PARTIAL=""
+read_command() {
+  local _rc_chunk="" _rc_status=0
+  IFS= read -r -t "$1" _rc_chunk || _rc_status=$?
+  if (( _rc_status == 0 )); then
+    printf -v "$2" '%s' "$HC_PARTIAL$_rc_chunk"
+    HC_PARTIAL=""
+    return 0
+  fi
+  if (( _rc_status > 128 )); then
+    # A whole wait without anything new: the rest is not coming.
+    if [[ -z "$_rc_chunk" && -n "$HC_PARTIAL" ]]; then
+      log "commands: dropping an unfinished command"
+      HC_PARTIAL=""
+    fi
+    HC_PARTIAL+="$_rc_chunk"
+    return 2
+  fi
+  HC_PARTIAL+="$_rc_chunk"
+  if [[ -n "$HC_PARTIAL" ]]; then
+    printf -v "$2" '%s' "$HC_PARTIAL"
+    HC_PARTIAL=""
+    return 0
+  fi
+  return 1
+}
+
 # A morning lock that survived a crash or a restart would refuse every later
 # morning command. Called once at start-up, before any command is read.
 clear_stale_locks() {
