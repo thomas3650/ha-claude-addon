@@ -63,3 +63,36 @@ managed_setup() {
   [ ! -e "$DST" ]
   [ ! -e "$HC_STATUS/managed-settings.json" ]
 }
+
+@test "a link out of the working folder is refused like a broken file" {
+  managed_setup
+  echo '{"a":1}' > "$SRC"
+  install_managed_settings
+  rm "$SRC"
+  echo '{"deploy_key":"secret"}' > "$BATS_TEST_TMPDIR/outside.json"
+  ln -s "$BATS_TEST_TMPDIR/outside.json" "$SRC"
+  run --separate-stderr install_managed_settings
+  [ "$status" -eq 0 ]
+  [ "$(cat "$DST")" = '{"a":1}' ]
+  [[ "$stderr" == *"keeping the last good copy"* ]]
+}
+
+@test "a linked .claude folder is refused, and nothing is installed without a good copy" {
+  managed_setup
+  rmdir "$HC_WORKSPACE/.claude"
+  mkdir "$BATS_TEST_TMPDIR/elsewhere"
+  echo '{"deploy_key":"secret"}' > "$BATS_TEST_TMPDIR/elsewhere/managed-settings.json"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$HC_WORKSPACE/.claude"
+  run --separate-stderr install_managed_settings
+  [ "$status" -eq 0 ]
+  [ ! -e "$DST" ]
+}
+
+@test "two JSON values in one file are treated as broken" {
+  managed_setup
+  echo '{"a":1}' > "$SRC"
+  install_managed_settings
+  echo '[] {"b":2}' > "$SRC"
+  install_managed_settings
+  [ "$(cat "$DST")" = '{"a":1}' ]
+}

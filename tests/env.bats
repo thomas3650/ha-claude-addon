@@ -66,11 +66,14 @@ bats_require_minimum_version 1.5.0
 
 @test "assistant_env never logs an entry that has no name" {
   load_lib options env
-  set_options '{"assistant_env":["sk-pasted-secret with spaces"]}'
+  set_options '{"assistant_env":["sk-pasted-secret with spaces","barewordsecret123","half_secret=rest"]}'
   run --separate-stderr assistant_env
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   [[ "$stderr" != *"pasted"* ]]
+  [[ "$stderr" != *"barewordsecret123"* ]]
+  [[ "$stderr" == *"an assistant_env entry without a name"* ]]
+  [[ "$stderr" == *"ignoring assistant_env entry 'half_secret'"* ]]
 }
 
 @test "assistant_env prints nothing without the option or the options file" {

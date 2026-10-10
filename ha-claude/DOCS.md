@@ -33,7 +33,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `repo_url` | Optional. A git repo whose `assistant/` folder becomes Claude's working folder |
 | `deploy_key` | A read-only SSH deploy key for that repo, as text or base64, without a passphrase. Needed whenever `repo_url` is set |
 | `extra_packages` | Optional. Ubuntu packages to install at start |
-| `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; anything else is ignored and logged by name. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
+| `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; any other entry is refused. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
 
 ## Commands
 
@@ -65,12 +65,13 @@ command, type it in Claude Code with `!` in front.
 ## What Claude can and cannot reach
 
 Claude Code runs as the user `claude`. Its working folder is read-only, it
-cannot read the add-on's options or the cloned repo, and the token Home
-Assistant gives the add-on is never in its environment. The add-on maps no
+cannot read the add-on's options (except the values in `assistant_env`) or
+the cloned repo, and the token Home Assistant gives the add-on is never in
+its environment. The add-on maps no
 Home Assistant folders and publishes no ports.
 
 If the working folder holds a file `.claude/managed-settings.json`, the add-on
 installs it as Claude Code's managed settings at start and on the `sync`
 command. Managed settings rank above every other settings file, and Claude
-cannot change them. A file that is not valid JSON is not installed; the last
-good one stays, and the log says so.
+cannot change them. A file that is not one JSON object, or that is a link, is not
+installed; the last good one stays, and the log says so.
