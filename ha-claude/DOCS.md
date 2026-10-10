@@ -85,6 +85,41 @@ can hold what Claude read: only root can read it, which means from the host
 and not from the panel, and it is left out of backups. The run keeps no
 transcript.
 
+## Home Assistant for Claude
+
+The add-on forwards one address to Home Assistant: the endpoint of the
+integration **Model Context Protocol Server**. Inside the container it is
+
+    http://127.0.0.1:7684/mcp
+
+Point Claude Code at it from the working folder's `.mcp.json`, as a server of
+type `http`. The add-on adds the token Home Assistant gave it; Claude never
+sees the token, and the listener accepts POST to that one address and nothing
+else, from inside the container only.
+
+What Claude can read and control is then what you have exposed to Assist in
+Home Assistant, and nothing more. Add the integration under Settings,
+Devices & services, and review Settings, Voice assistants, Expose before
+you do: every exposed entity can be controlled. Whether Claude asks before
+it acts is decided by the permission rules in the working folder.
+
+The listener serves every process in the container. A shell in the panel
+can use it, and so can any shell command Claude is allowed to run, without
+a permission prompt for the tool. Keep the shell denied for Claude in the
+working folder's rules, or allow only commands that cannot reach it.
+
+When the add-on starts it tries the address once and logs the status code
+of the answer, as `proxy: Home Assistant answered NNN through the
+listener`:
+
+| Logged | Meaning |
+|---|---|
+| A code from 200 to 299 | It works |
+| 404 | The way works; the integration is not set up |
+| 401 | Home Assistant refused the token |
+| 502 | Home Assistant could not be reached |
+| `nothing` | No answer within fifteen seconds |
+
 ## Is it working?
 
 Run `ha-claude-status` in the panel, under the link **Shell**. It shows whether the chat
@@ -103,7 +138,8 @@ Claude Code runs as the user `claude`. Its working folder is read-only, it
 cannot read the add-on's options (except the values in `assistant_env`) or
 the cloned repo, and the token Home Assistant gives the add-on is never in
 its environment. The add-on maps no
-Home Assistant folders and publishes no ports.
+Home Assistant folders and publishes no ports. Its one way to Home
+Assistant is described under "Home Assistant for Claude".
 
 If the working folder holds a file `.claude/managed-settings.json`, the add-on
 installs it as Claude Code's managed settings at start and on the `sync`
