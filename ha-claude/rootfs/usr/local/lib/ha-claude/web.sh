@@ -52,14 +52,31 @@ render_nginx_conf() {
       -e "s|__AUTH__|$HC_PROXY_DIR/proxy-auth.conf|" "$1"
 }
 
-# Asks Home Assistant once through the listener and logs the status code,
-# and nothing else of the answer. What the codes mean is in DOCS.md.
+# Posts one MCP request through the listener. Arguments: the method, then
+# curl options.
+_proxy_post() {
+  local method="$1"; shift
+  curl -s -m 15 -X POST \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\"}" \
+    "$@" http://127.0.0.1:7684/mcp 2>/dev/null
+}
+
+# Asks Home Assistant once through the listener and logs the status code.
+# What the codes mean is in DOCS.md. When Home Assistant answers, the names
+# of the tools it offers are logged as well, since permission rules are
+# written by tool name. Nothing else of an answer is logged, and a name is
+# logged only when it is made of letters, digits, "_" and "-". A script
+# that is exposed is offered as a tool under its own name.
 check_proxy() {
-  local code=""
-  code="$(curl -s -o /dev/null -m 15 -w '%{http_code}' -X POST \
-            -H 'Content-Type: application/json' \
-            -H 'Accept: application/json, text/event-stream' \
-            -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' \
-            http://127.0.0.1:7684/mcp 2>/dev/null)" || code=""
+  local code="" names=""
+  code="$(_proxy_post ping -o /dev/null -w '%{http_code}')" || code=""
   log "proxy: Home Assistant answered ${code:-nothing} through the listener"
+  [[ "$code" == 2* ]] || return 0
+  names="$(_proxy_post tools/list | sed -n -e 's/^data: \{0,1\}//' -e '/^{/p' \
+            | jq -r '[.result.tools[]?.name? | strings | select(test("^[A-Za-z0-9_-]{1,64}$"))] | .[:80] | join(" ")' 2>/dev/null \
+            | head -n 1 | grep -E '^[A-Za-z0-9_ -]+$')" || names=""
+  [[ -n "$names" ]] && log "proxy: Home Assistant offers these tools: $names"
+  return 0
 }

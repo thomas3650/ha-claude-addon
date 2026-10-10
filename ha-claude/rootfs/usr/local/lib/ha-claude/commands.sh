@@ -57,12 +57,18 @@ handle_command() {
       sync_workspace
       ensure_layout
       install_managed_settings
-      restart_chat
-      raise_outcome sync ok
+      if restart_chat; then
+        raise_outcome sync ok
+      else
+        raise_outcome sync failed
+      fi
       ;;
     restart-chat)
-      restart_chat
-      raise_outcome restart-chat ok
+      if restart_chat; then
+        raise_outcome restart-chat ok
+      else
+        raise_outcome restart-chat failed
+      fi
       ;;
     morning)
       # The run is waited for here: until it has ended, no other command is
@@ -70,7 +76,9 @@ handle_command() {
       local outcome=failed
       log "commands: the morning run starts"
       run_morning outcome
-      [[ "$outcome" == not_configured ]] || restart_chat "$(opening_prompt "$outcome")"
+      if [[ "$outcome" != not_configured ]] && ! restart_chat "$(opening_prompt "$outcome")"; then
+        log "commands: there is no chat session to present the morning run"
+      fi
       raise_outcome morning "$outcome"
       ;;
     "")
