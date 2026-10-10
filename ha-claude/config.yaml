@@ -22,10 +22,13 @@ backup_exclude:
   - home/.cache/**
   - home/.npm/**
   - repo/**
+  - state/morning.log
 options:
   session_name: Home
   extra_packages: []
   assistant_env: []
+  morning_timeout: 900
+  morning_max_turns: 40
 schema:
   session_name: str
   repo_url: str?
@@ -34,3 +37,5 @@ schema:
     - str
   assistant_env:
     - match(^ASSISTANT_[A-Z0-9_]+=.*$)
+  morning_timeout: int(60,3600)
+  morning_max_turns: int(1,200)

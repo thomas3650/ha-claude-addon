@@ -25,25 +25,48 @@ chat_command() {
   printf '%s\n' "${argv[@]}"
 }
 
+# Fills the array CHAT_ARGV with the argv for the chat session. An opening
+# prompt in HC_OPENING_PROMPT is used by the first call only: when Claude
+# Code is started again in the same session, the prompt is not given again.
+next_chat_argv() {
+  # shellcheck disable=SC2034  # read by ha-claude-chat
+  mapfile -t CHAT_ARGV < <(chat_command "${HC_OPENING_PROMPT:-}")
+  unset HC_OPENING_PROMPT
+}
+
 chat_alive() {
   as_claude tmux -L "$HC_TMUX_SOCKET" has-session -t "$HC_TMUX_SESSION" 2>/dev/null
 }
 
+# start_chat [opening prompt] - does nothing when a session is running,
+# unless a prompt is given: a session that the web terminal started in the
+# meantime has no prompt, so it is ended and replaced.
 start_chat() {
-  local entry
+  local entry prompt="${1:-}" try
   local -a extra=()
-  chat_alive && return 0
+  [[ -z "$prompt" ]] && chat_alive && return 0
   log "chat: starting a new session"
   while IFS= read -r entry; do
     extra+=(-e "$entry")
   done < <(assistant_env)
-  as_claude tmux -L "$HC_TMUX_SOCKET" new-session -d -s "$HC_TMUX_SESSION" \
-    -e "HC_SESSION_NAME=$(opt '.session_name' 'Home')" \
-    "${extra[@]}" \
-    -c "$HC_WORKSPACE" /usr/local/bin/ha-claude-chat
+  [[ -n "$prompt" ]] && extra+=(-e "HC_OPENING_PROMPT=$prompt")
+  for try in 1 2; do
+    if chat_alive; then
+      [[ -z "$prompt" ]] && return 0
+      as_claude tmux -L "$HC_TMUX_SOCKET" kill-session -t "$HC_TMUX_SESSION" 2>/dev/null || true
+    fi
+    as_claude tmux -L "$HC_TMUX_SOCKET" new-session -d -s "$HC_TMUX_SESSION" \
+      -e "HC_SESSION_NAME=$(opt '.session_name' 'Home')" \
+      "${extra[@]}" \
+      -c "$HC_WORKSPACE" /usr/local/bin/ha-claude-chat && return 0
+    (( try == 1 )) && sleep 1
+  done
+  log "chat: a new session could not be started"
+  return 1
 }
 
+# restart_chat [opening prompt]
 restart_chat() {
   as_claude tmux -L "$HC_TMUX_SOCKET" kill-session -t "$HC_TMUX_SESSION" 2>/dev/null || true
-  start_chat
+  start_chat "${1:-}"
 }

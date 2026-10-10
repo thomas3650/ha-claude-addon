@@ -6,7 +6,9 @@ stub_actions() {
   sync_workspace() { echo "sync" >> "$CALLS"; }
   install_managed_settings() { echo "managed" >> "$CALLS"; }
   ensure_layout() { :; }
-  restart_chat() { echo "restart" >> "$CALLS"; }
+  restart_chat() { echo "restart${1:+ $1}" >> "$CALLS"; }
+  MORNING_OUTCOME=ok
+  run_morning() { echo "run" >> "$CALLS"; printf -v "$1" '%s' "$MORNING_OUTCOME"; }
 }
 
 @test "parse_command reads a JSON string, a plain word and an object" {
@@ -46,21 +48,6 @@ stub_actions() {
   [ ! -s "$CALLS" ]
 }
 
-@test "a second morning command while one runs is refused as busy" {
-  load_lib commands; stub_actions
-  mkdir -p "$HC_STATE/morning.lock"
-  handle_command 'morning'
-  [ "$(cat "$CALLS")" = "outcome morning busy" ]
-  [ -d "$HC_STATE/morning.lock" ]
-}
-
-@test "morning is a stub that reports not_implemented and releases its lock" {
-  load_lib commands; stub_actions
-  handle_command 'morning'
-  [ "$(cat "$CALLS")" = "outcome morning not_implemented" ]
-  [ ! -e "$HC_STATE/morning.lock" ]
-}
-
 @test "raise_outcome keeps the Supervisor token off the command line" {
   load_lib outcome
   export SUPERVISOR_TOKEN=tok-123
@@ -79,15 +66,6 @@ stub_actions() {
   [ "$status" -eq 0 ]
   [ -z "$output" ]
   [ ! -s "$CALLS" ]
-}
-
-@test "a morning lock left by a crash is cleared at start-up" {
-  load_lib commands; stub_actions
-  mkdir -p "$HC_STATE/morning.lock"
-  clear_stale_locks
-  [ ! -e "$HC_STATE/morning.lock" ]
-  handle_command 'morning'
-  [ "$(cat "$CALLS")" = "outcome morning not_implemented" ]
 }
 
 @test "read_command returns a whole line" {
@@ -136,4 +114,59 @@ stub_actions() {
   [ "$rc" -eq 2 ]
   [ -z "$HC_PARTIAL" ]
   exec 9<&-
+}
+
+@test "morning runs the briefing, starts a new chat that presents the summary, and reports ok" {
+  load_lib morning commands; stub_actions
+  handle_command 'morning'
+  [ "$(sed -n 1p "$CALLS")" = "run" ]
+  [ "$(sed -n 2p "$CALLS")" = "restart $(opening_prompt ok)" ]
+  [ "$(sed -n 3p "$CALLS")" = "outcome morning ok" ]
+}
+
+@test "a failed morning run still starts a new chat, which says so, and reports the outcome" {
+  load_lib morning commands; stub_actions
+  MORNING_OUTCOME=timeout
+  handle_command 'morning'
+  [ "$(sed -n 2p "$CALLS")" = "restart $(opening_prompt timeout)" ]
+  [ "$(sed -n 3p "$CALLS")" = "outcome morning timeout" ]
+}
+
+@test "without the agent the chat session is left alone" {
+  load_lib morning commands; stub_actions
+  MORNING_OUTCOME=not_configured
+  handle_command 'morning'
+  [ "$(cat "$CALLS")" = $'run\noutcome morning not_configured' ]
+}
+
+@test "a stop signal during a morning run ends the main process at once" {
+  STUB="$BATS_TEST_TMPDIR/stub"
+  mkdir -p "$STUB" "$HC_DATA/workspace/assistant/.claude/agents"
+  touch "$HC_DATA/workspace/assistant/.claude/agents/morning-briefing.md"
+  printf '#!/usr/bin/env bash\nsleep 30 &\ntrap "kill $!" TERM\nwait\n' > "$STUB/claude"
+  chmod +x "$STUB/claude"
+  cat > "$BATS_TEST_TMPDIR/main" <<EOT
+for f in paths log options env morning commands; do . "$LIB/\$f.sh"; done
+raise_outcome() { :; }
+restart_chat() { :; }
+trap 'echo stopped; exit 0' TERM
+handle_command morning
+echo finished
+EOT
+  HC_CLAUDE_BIN="$STUB/claude" \
+  HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" \
+    bash "$BATS_TEST_TMPDIR/main" > "$BATS_TEST_TMPDIR/out" 2>&1 3>&- &
+  pid=$!
+  sleep 2
+  kill -TERM "$pid"
+  for _ in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  pkill -f "$STUB/claude" 2>/dev/null || true
+  run kill -0 "$pid"
+  [ "$status" -ne 0 ]
+  grep -qx "stopped" "$BATS_TEST_TMPDIR/out"
+  run grep "finished" "$BATS_TEST_TMPDIR/out"
+  [ "$status" -eq 1 ]
 }
