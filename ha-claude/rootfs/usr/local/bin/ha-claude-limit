@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# ha-claude-limit SECONDS COMMAND... - runs the command, and ends it when it
+# has run for the given number of seconds: asks it to stop, and kills it
+# thirty seconds later if it has not. Exits with the command's own status, or
+# with 124 when the time ran out.
+limit="$1"; shift
+grace="${HC_LIMIT_GRACE:-30}"
+"$@" &
+pid=$!
+(
+  for (( i = 0; i < limit; i++ )); do
+    kill -0 "$pid" 2>/dev/null || exit 0
+    sleep 1
+  done
+  kill -TERM "$pid" 2>/dev/null
+  for (( i = 0; i < grace; i++ )); do
+    kill -0 "$pid" 2>/dev/null || exit 3
+    sleep 1
+  done
+  kill -KILL "$pid" 2>/dev/null
+  exit 3
+) &
+watchdog=$!
+wait "$pid"; status=$?
+if wait "$watchdog"; then
+  exit "$status"
+fi
+exit 124
