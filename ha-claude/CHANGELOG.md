@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.5.0...v0.5.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* do not lose a command that arrives while the wait for input ends ([#13](https://github.com/thomas3650/ha-claude-addon/issues/13)) ([d3248f3](https://github.com/thomas3650/ha-claude-addon/commit/d3248f39247fd37e697dab4b7667e523552472b5))
+
 ## [0.5.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.4.0...v0.5.0) (2026-10-10)
 
 
