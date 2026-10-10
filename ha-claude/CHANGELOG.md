@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.8.0...v0.8.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* say when a sync kept the old working folder, and keep instruction files out of the handover folder ([#21](https://github.com/thomas3650/ha-claude-addon/issues/21)) ([a069787](https://github.com/thomas3650/ha-claude-addon/commit/a069787efbfaa5a531ef87a62c153d3a32a95fb1))
+
 ## [0.8.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.7.0...v0.8.0) (2026-10-10)
 
 
