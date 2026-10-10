@@ -44,16 +44,17 @@ chat_alive() {
 start_chat() {
   local entry prompt="${1:-}" try
   local -a extra=()
-  if chat_alive; then
-    [[ -z "$prompt" ]] && return 0
-    as_claude tmux -L "$HC_TMUX_SOCKET" kill-session -t "$HC_TMUX_SESSION" 2>/dev/null || true
-  fi
+  [[ -z "$prompt" ]] && chat_alive && return 0
   log "chat: starting a new session"
   while IFS= read -r entry; do
     extra+=(-e "$entry")
   done < <(assistant_env)
   [[ -n "$prompt" ]] && extra+=(-e "HC_OPENING_PROMPT=$prompt")
   for try in 1 2; do
+    if chat_alive; then
+      [[ -z "$prompt" ]] && return 0
+      as_claude tmux -L "$HC_TMUX_SOCKET" kill-session -t "$HC_TMUX_SESSION" 2>/dev/null || true
+    fi
     as_claude tmux -L "$HC_TMUX_SOCKET" new-session -d -s "$HC_TMUX_SESSION" \
       -e "HC_SESSION_NAME=$(opt '.session_name' 'Home')" \
       "${extra[@]}" \

@@ -70,7 +70,7 @@ that the run did not finish. The outcome is one of:
 | Outcome | Meaning |
 |---|---|
 | `ok` | The run ended without an error and wrote today's handover file |
-| `failed` | The run ended with an error, or today's handover file was not written. Reaching `morning_max_turns` is an error, also when the file was written |
+| `failed` | The run ended with an error, or today's handover file was not written. A run that Claude Code ends with an error is `failed` also when the file was written |
 | `timeout` | The run took longer than `morning_timeout` and was stopped |
 | `not_configured` | The working folder has no agent `morning-briefing`; nothing was run and the chat session was left alone |
 

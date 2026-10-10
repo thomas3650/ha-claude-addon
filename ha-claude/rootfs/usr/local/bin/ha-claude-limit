@@ -22,7 +22,8 @@ stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
   # Nothing left to stop: the command ended by itself in the last second.
   stop TERM || exit 0
   for (( i = 0; i < grace; i++ )); do
-    kill -0 "$pid" 2>/dev/null || exit 3
+    # The command is gone; what it started may not be.
+    kill -0 "$pid" 2>/dev/null || { stop KILL; exit 3; }
     sleep 1
   done
   stop KILL
