@@ -4,7 +4,7 @@
 set -uo pipefail
 
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env layout sync diagnostics session outcome commands; do
+for f in paths log options env layout sync managed diagnostics session outcome commands; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -42,6 +42,7 @@ install_extra_packages
 run_diagnostics
 sync_workspace
 ensure_layout
+install_managed_settings
 start_ingress
 start_chat
 clear_stale_locks

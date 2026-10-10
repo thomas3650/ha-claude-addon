@@ -57,6 +57,19 @@ window="$(docker exec "$name" runuser -u claude -- tmux -L hc new-window -d -P -
   || fail "a second tmux window could not be opened"
 [[ "$window" == "bash" ]] || fail "the second tmux window runs '$window', not a shell"
 
+# Managed settings: a file in the working folder is installed by the sync
+# command, readable by the Claude user and not writable by it.
+docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude && echo "{\"smoke\":1}" > /data/workspace/assistant/.claude/managed-settings.json'
+printf '"sync"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 20); do
+  grep -q "outcome: sync=ok" <<<"$(logs)" && break
+  sleep 1
+done
+docker exec "$name" runuser -u claude -- grep -q smoke /etc/claude-code/managed-settings.json \
+  || fail "the Claude user cannot read the managed settings"
+docker exec "$name" runuser -u claude -- sh -c 'echo x >> /etc/claude-code/managed-settings.json' 2>/dev/null \
+  && fail "the Claude user can write the managed settings"
+
 # Commands on standard input: unknown is ignored, ping is handled.
 # KILL, because the Docker client does not exit on a single TERM.
 printf '"nonsense"\n"ping"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true

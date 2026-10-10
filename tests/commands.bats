@@ -4,6 +4,7 @@ stub_actions() {
   CALLS="$BATS_TEST_TMPDIR/calls"; : > "$CALLS"
   raise_outcome() { echo "outcome $1 $2" >> "$CALLS"; }
   sync_workspace() { echo "sync" >> "$CALLS"; }
+  install_managed_settings() { echo "managed" >> "$CALLS"; }
   ensure_layout() { :; }
   restart_chat() { echo "restart" >> "$CALLS"; }
 }
@@ -22,10 +23,10 @@ stub_actions() {
   [ "$(cat "$CALLS")" = "outcome ping ok" ]
 }
 
-@test "sync syncs, restarts the chat and reports ok" {
+@test "sync syncs, installs the managed settings, restarts the chat and reports ok" {
   load_lib commands; stub_actions
   handle_command 'sync'
-  [ "$(cat "$CALLS")" = $'sync\nrestart\noutcome sync ok' ]
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
 }
 
 @test "an unknown command is ignored and logged" {

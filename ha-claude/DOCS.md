@@ -67,3 +67,9 @@ Claude Code runs as the user `claude`. Its working folder is read-only, it
 cannot read the add-on's options or the cloned repo, and the token Home
 Assistant gives the add-on is never in its environment. The add-on maps no
 Home Assistant folders and publishes no ports.
+
+If the working folder holds a file `.claude/managed-settings.json`, the add-on
+installs it as Claude Code's managed settings at start and on the `sync`
+command. Managed settings rank above every other settings file, and Claude
+cannot change them. A file that is not valid JSON is not installed; the last
+good one stays, and the log says so.

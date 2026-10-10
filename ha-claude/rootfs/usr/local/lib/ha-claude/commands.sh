@@ -28,6 +28,7 @@ handle_command() {
     sync)
       sync_workspace
       ensure_layout
+      install_managed_settings
       restart_chat
       raise_outcome sync ok
       ;;
