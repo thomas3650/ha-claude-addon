@@ -62,3 +62,35 @@ load helpers
   run grep -- "PATH=/tmp/evil" "$BATS_TEST_TMPDIR/as_claude"
   [ "$status" -eq 1 ]
 }
+
+@test "start_chat hands an opening prompt to the chat session, and none when none is given" {
+  load_lib options env session
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
+  start_chat "Say hello to the owner"
+  grep -q -- "-e HC_OPENING_PROMPT=Say hello to the owner" "$BATS_TEST_TMPDIR/as_claude"
+  : > "$BATS_TEST_TMPDIR/as_claude"
+  start_chat
+  run grep -- "HC_OPENING_PROMPT" "$BATS_TEST_TMPDIR/as_claude"
+  [ "$status" -eq 1 ]
+}
+
+@test "restart_chat ends the session and passes the opening prompt on" {
+  load_lib options env session
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
+  restart_chat "Say hello to the owner"
+  grep -q -- "kill-session" "$BATS_TEST_TMPDIR/as_claude"
+  grep -q -- "-e HC_OPENING_PROMPT=Say hello to the owner" "$BATS_TEST_TMPDIR/as_claude"
+}
+
+@test "the opening prompt is used for the first start only" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_OPENING_PROMPT="Say hello to the owner"
+  next_chat_argv
+  [ "${CHAT_ARGV[0]}" = "claude" ]
+  [ "${CHAT_ARGV[${#CHAT_ARGV[@]}-1]}" = "Say hello to the owner" ]
+  [ -z "${HC_OPENING_PROMPT:-}" ]
+  next_chat_argv
+  [ "${CHAT_ARGV[0]}" = "claude" ]
+  [[ "${CHAT_ARGV[*]}" != *"Say hello"* ]]
+}

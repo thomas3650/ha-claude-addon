@@ -25,9 +25,9 @@ while true; do
 EOT
     exec bash -l
   fi
-  mapfile -t argv < <(chat_command)
+  next_chat_argv
   started=$SECONDS
-  "${argv[@]}"
+  "${CHAT_ARGV[@]}"
   rc=$?
   if (( SECONDS - started < 30 )); then
     quick_exits=$((quick_exits + 1))
