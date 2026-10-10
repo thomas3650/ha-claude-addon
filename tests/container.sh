@@ -85,5 +85,16 @@ grep -q "ignoring unknown command" <<<"$(logs)" || fail "unknown command was not
 grep -q "outcome: ping=ok" <<<"$(logs)" || fail "ping was not handled"
 docker inspect -f '{{.State.Running}}' "$name" | grep -q true || fail "the add-on stopped"
 
+# Retention: a handover file dated long ago is gone after a restart.
+docker exec "$name" runuser -u claude -- touch /data/handover/1999-01-01.md /data/handover/keep.md
+docker restart "$name" >/dev/null
+for _ in $(seq 1 60); do
+  [[ "$(logs | grep -c '\] ready$')" -ge 2 ]] && break
+  sleep 1
+done
+[[ "$(logs | grep -c '\] ready$')" -ge 2 ]] || fail "the add-on did not log ready after the restart"
+docker exec "$name" test ! -e /data/handover/1999-01-01.md || fail "an old handover file survived a restart"
+docker exec "$name" test -e /data/handover/keep.md || fail "retention removed a file that is not a handover file"
+
 docker rm -f "$name" >/dev/null
 echo "container smoke test passed"
