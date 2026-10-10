@@ -4,7 +4,7 @@
 set -uo pipefail
 
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env layout sync managed diagnostics session outcome commands; do
+for f in paths log options env layout sync managed retention diagnostics session outcome commands; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -48,6 +48,8 @@ start_ingress
 start_chat
 clear_stale_locks
 logged_in || log "Claude Code is not logged in: open the add-on's web terminal and follow the steps shown"
+prune_handover
+pruned="$(date +%F)"
 log "ready"
 
 # Short waits, so a stop signal is handled within the manifest's timeout.
@@ -62,4 +64,10 @@ while true; do
   fi
   ticks=$((ticks + 1))
   if (( ticks % 6 == 0 )); then chat_alive || start_chat; fi
+  # Retention ran at start; here once on each new day.
+  today="$(date +%F)"
+  if [[ "$today" != "$pruned" ]]; then
+    prune_handover
+    pruned="$today"
+  fi
 done

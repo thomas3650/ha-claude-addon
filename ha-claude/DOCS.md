@@ -74,3 +74,7 @@ installs it as Claude Code's managed settings at start and on the `sync`
 command. Managed settings rank above every other settings file, and Claude
 cannot change them. A file that is not one JSON object, or that is a link, is not
 installed; the last good one stays, and the log says so.
+
+The handover folder, `/data/handover`, is the one place outside its home
+where Claude can write. Files named `YYYY-MM-DD.md` there are deleted once
+their date is more than 30 days ago. Nothing else in that folder is touched.
