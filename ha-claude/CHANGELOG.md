@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.6.0...v0.7.0) (2026-10-10)
+
+
+### Features
+
+* forward Home Assistant's MCP Server endpoint to Claude, with the token kept from it ([#17](https://github.com/thomas3650/ha-claude-addon/issues/17)) ([74dba80](https://github.com/thomas3650/ha-claude-addon/commit/74dba80577c0678dedbfb2ae87dcc5689f186073))
+
 ## [0.6.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.5.1...v0.6.0) (2026-10-10)
 
 
