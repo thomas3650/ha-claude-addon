@@ -54,13 +54,14 @@ log "ready"
 
 # Short waits, so a stop signal is handled within the manifest's timeout.
 ticks=0
+line=""
 while true; do
-  if IFS= read -r -t 5 line; then
+  if read_command 5 line; then
     handle_command "$line"
   else
     rc=$?
     # 1 means standard input is closed; wait instead of spinning.
-    if (( rc <= 128 )); then sleep 5 & wait $!; fi
+    if (( rc == 1 )); then sleep 5 & wait $!; fi
   fi
   ticks=$((ticks + 1))
   if (( ticks % 6 == 0 )); then chat_alive || start_chat; fi
