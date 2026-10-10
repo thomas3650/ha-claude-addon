@@ -17,6 +17,9 @@ points at a version whose image has been published.
 
 1. Start the add-on and open its panel.
 2. Run `claude`, follow the login link, and accept the prompts it shows.
+   The link is longer than one line. Copy all of it and take out the line
+   breaks before opening it; a link that is cut short is answered with
+   "Unknown scope".
 3. Exit Claude and type `exit`. The add-on starts the chat session within a
    minute, and it appears in the Claude app under the session name.
 
@@ -47,8 +50,16 @@ Every command raises the event `ha_claude_outcome` with `command` and
 
 ## Is it working?
 
-Run `ha-claude-status` in the panel. It shows whether the chat session is
-running, whether Claude is logged in, and when the working folder last synced.
+Run `ha-claude-status` in a shell in the panel. It shows whether the chat
+session is running, whether Claude is logged in, and when the working folder
+last synced.
+
+## A shell in the panel
+
+Once Claude is logged in, the panel shows Claude Code, and leaving it starts
+it again after ten seconds. For a shell beside it, press Ctrl-B and then C;
+Ctrl-B and then 0 goes back to Claude, and `exit` closes the shell. For one
+command, type it in Claude Code with `!` in front.
 
 ## What Claude can and cannot reach
 

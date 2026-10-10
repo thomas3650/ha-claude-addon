@@ -18,5 +18,3 @@
 ### Bug Fixes
 
 * keep the token off the command line, and six start-up and status faults ([#2](https://github.com/thomas3650/ha-claude-addon/issues/2)) ([7ea57ed](https://github.com/thomas3650/ha-claude-addon/commit/7ea57ed18ce631def856d143a2c2c66ca09c8baa))
-
-## Changelog
