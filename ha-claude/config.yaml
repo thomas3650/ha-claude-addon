@@ -1,5 +1,5 @@
 name: HA Claude
-version: 0.4.0
+version: 0.5.0
 slug: ha_claude
 description: Claude Code with Remote Control as an always-on assistant
 url: https://github.com/thomas3650/ha-claude-addon

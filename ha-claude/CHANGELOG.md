@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.4.0...v0.5.0) (2026-10-10)
+
+
+### Features
+
+* delete handover files older than 30 days ([#11](https://github.com/thomas3650/ha-claude-addon/issues/11)) ([d4dfe90](https://github.com/thomas3650/ha-claude-addon/commit/d4dfe9024a188416129bf713c8d51416e4990141))
+
 ## [0.4.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.3.0...v0.4.0) (2026-10-10)
 
 
