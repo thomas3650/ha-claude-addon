@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.9.0...v0.10.0) (2026-10-11)
+
+
+### Features
+
+* the report command ([#25](https://github.com/thomas3650/ha-claude-addon/issues/25)) ([95e9933](https://github.com/thomas3650/ha-claude-addon/commit/95e9933db1653e884e0cefe59ecb60caa7315755))
+
 ## [0.9.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.8.1...v0.9.0) (2026-10-11)
 
 
