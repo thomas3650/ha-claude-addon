@@ -52,6 +52,7 @@ Send one of these with Home Assistant's add-on stdin action:
 | `sync` | Fetches the repo again and starts a new chat session |
 | `restart-chat` | Starts a new chat session |
 | `morning` | Runs the morning briefing, then starts a new chat session. See below |
+| `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
 
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data. For `restart-chat` the outcome is `ok`, or `failed`
@@ -59,7 +60,8 @@ when no chat session could be started. For `sync` it is `ok` when the
 working folder was renewed or no repo is configured, `kept` when the
 working folder could not be renewed and the previous one stays in use, and
 `failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say
-why.
+why. For `report` the outcome is `ok`, `failed` or `not_configured`; see
+below.
 
 ## The morning run
 
@@ -94,6 +96,42 @@ took. What Claude printed is kept in `/data/state/morning.log`, because it
 can hold what Claude read: only root can read it, which means from the host
 and not from the panel, and it is left out of backups. The run keeps no
 transcript.
+
+## The report
+
+On the command `report` the add-on runs the file `.claude/report` from the
+working folder, as the Claude user, with the scrubbed environment and the
+working folder as the current folder, for at most 30 seconds. With
+`report 2026-09` the month is checked (`YYYY-MM`) and passed to the file as
+its only argument; any other argument is `failed` and runs nothing. The
+file must be a regular file in the working folder's own `.claude` folder,
+not a link, and readable and executable by the Claude user; otherwise the
+outcome is `not_configured` and nothing runs.
+
+What the file prints on standard output reaches the add-on's log, framed:
+
+```text
+[07:15:02] report: begin
+[07:15:02] report: | first line
+[07:15:02] report: | second line
+[07:15:02] report: end, 2 lines
+[07:15:02] outcome: report=ok
+```
+
+Every line of the output starts with `report: | `, so it can never look like
+a line of the add-on's own. At most 200 lines are written, each cut at 200
+characters; when there are more, the last line says `report: end, 200
+lines, more left out`. Control characters are removed, empty lines are left
+out. What the file prints on standard error is thrown away. A file that
+ends with an error, or is stopped at the time limit (status 124), writes
+nothing to the log but one line with the status, and the outcome is
+`failed`.
+
+The log is kept by Home Assistant and shown in its UI, so the file must
+print nothing personal. While it runs, the output is in
+`/data/state/report.out`, which only root can read and which is left out of
+backups; it is removed when the command has ended. No other command is
+handled while a report runs.
 
 ## Home Assistant for Claude
 
