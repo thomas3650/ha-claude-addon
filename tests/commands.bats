@@ -198,3 +198,64 @@ EOT
   [ "$(tail -1 "$CALLS")" = "outcome sync ok" ]
 }
 
+@test "report runs the report file, with the month when one is given, and reports the outcome" {
+  load_lib report commands; stub_actions
+  REPORT_OUTCOME=ok
+  run_report() { echo "report${2:+ $2}" >> "$CALLS"; printf -v "$1" '%s' "$REPORT_OUTCOME"; }
+  handle_command '"report"'
+  [ "$(cat "$CALLS")" = $'report\noutcome report ok' ]
+  : > "$CALLS"
+  handle_command '"report 2026-09"'
+  [ "$(cat "$CALLS")" = $'report 2026-09\noutcome report ok' ]
+  : > "$CALLS"
+  REPORT_OUTCOME=not_configured
+  handle_command 'report'
+  [ "$(cat "$CALLS")" = $'report\noutcome report not_configured' ]
+}
+
+@test "an argument on a command that takes none makes it unknown" {
+  load_lib report commands; stub_actions
+  run handle_command '"sync now"'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ignoring unknown command"* ]]
+  [ ! -s "$CALLS" ]
+  run handle_command 'ping 1'
+  [[ "$output" == *"ignoring unknown command"* ]]
+  [ ! -s "$CALLS" ]
+}
+
+@test "parse_command reads a plain command with a month" {
+  load_lib commands
+  [ "$(parse_command 'report 2026-09')" = "report 2026-09" ]
+  [ "$(parse_command '"report 2026-09"')" = "report 2026-09" ]
+}
+
+@test "a stop signal during a report ends the main process at once" {
+  STUB="$HC_DATA/workspace/assistant/.claude"
+  mkdir -p "$STUB" "$HC_DATA/state"
+  printf '#!/usr/bin/env bash\nsleep 30 &\ntrap "kill $!" TERM\nwait\n' > "$STUB/report"
+  chmod 755 "$STUB/report"
+  cat > "$BATS_TEST_TMPDIR/main" <<EOT
+for f in paths log options env report commands; do . "$LIB/\$f.sh"; done
+raise_outcome() { :; }
+trap 'echo stopped; exit 0' TERM
+handle_command report
+echo finished
+EOT
+  HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" \
+    bash "$BATS_TEST_TMPDIR/main" > "$BATS_TEST_TMPDIR/out" 2>&1 3>&- &
+  pid=$!
+  sleep 2
+  kill -TERM "$pid"
+  for _ in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  pkill -f "$STUB/report" 2>/dev/null || true
+  run kill -0 "$pid"
+  [ "$status" -ne 0 ]
+  grep -qx "stopped" "$BATS_TEST_TMPDIR/out"
+  run grep "finished" "$BATS_TEST_TMPDIR/out"
+  [ "$status" -eq 1 ]
+}
+
