@@ -145,6 +145,39 @@ run_it() { run_report got "$@" 2> "$BATS_TEST_TMPDIR/err"; }
   [ ! -e "$HC_STATE/report.out" ]
 }
 
+@test "a flood of empty lines is cut off at the output cap and ends within seconds" {
+  load_lib options env report
+  stub_report 'yes "" | head -c 50000000; echo x'
+  started=$SECONDS
+  run_it
+  (( SECONDS - started < 10 ))
+  [ "$got" = "failed" ]
+  ! grep -q 'report: begin' "$BATS_TEST_TMPDIR/err"
+}
+
+@test "one huge line that stays under the cap is framed within seconds, and a report of 200 full lines fits" {
+  load_lib options env report
+  stub_report 'head -c 200000 /dev/zero | tr "\0" a; echo; echo tail'
+  started=$SECONDS
+  run_it
+  (( SECONDS - started < 10 ))
+  [ "$got" = "ok" ]
+  grep -qx 'report: | tail' <(logged)
+  stub_report 'for i in $(seq 1 200); do printf "%0200d\n" "$i"; done'
+  run_it
+  [ "$got" = "ok" ]
+  grep -qx 'report: end, 200 lines' <(logged)
+}
+
+@test "output that ends in an incomplete UTF-8 character gives no line outside the frame" {
+  load_lib options env report
+  stub_report 'printf "line one\n\303"'
+  run_it
+  [ "$got" = "ok" ]
+  [ "$(logged | grep -vc '^report: ')" -eq 0 ]
+  grep -qx 'report: | line one' <(logged)
+}
+
 @test "the outcome is never printed" {
   load_lib options env report
   stub_report 'echo one'

@@ -138,7 +138,7 @@ docker exec "$name" pgrep -u claude tmux >/dev/null || fail "no chat session aft
 # what it prints on standard error does not, a Danish letter survives, and the
 # output file is gone afterwards. A file the Claude user cannot run is
 # not_configured, although root could run it.
-docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude && printf "%s\n" "#!/bin/sh" "echo \"report for \$1\"" "echo \"outcome: sync=ok\"" "echo \"køkken | 1\"" "echo secret-on-stderr >&2" > /data/workspace/assistant/.claude/report && chmod 755 /data/workspace/assistant/.claude/report'
+docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude && printf "%s\n" "#!/bin/sh" "echo \"report for \$1\"" "echo \"outcome: sync=ok\"" "echo \"køkken | 1\"" "printf \"stray\\205byte\\n\"" "echo secret-on-stderr >&2" > /data/workspace/assistant/.claude/report && chmod 755 /data/workspace/assistant/.claude/report'
 reports_before="$(logs | grep -c 'outcome: report=' || true)"
 printf '"report 2026-09"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
 for _ in $(seq 1 60); do
@@ -149,7 +149,8 @@ grep -q "outcome: report=ok" <<<"$(logs)" || fail "the report command did not re
 grep -q "report: | report for 2026-09" <<<"$(logs)" || fail "the month did not reach the report file"
 grep -q "report: | outcome: sync=ok" <<<"$(logs)" || fail "a line that imitates the log was not framed"
 grep -q "report: | køkken | 1" <<<"$(logs)" || fail "a Danish letter did not survive the cleaning"
-grep -q "report: end, 3 lines" <<<"$(logs)" || fail "the frame's end line is missing"
+grep -q "report: | straybyte" <<<"$(logs)" || fail "a byte that is not UTF-8 was not dropped"
+grep -q "report: end, 4 lines" <<<"$(logs)" || fail "the frame's end line is missing"
 if grep -q "secret-on-stderr" <<<"$(logs)"; then fail "standard error reached the log"; fi
 docker exec "$name" test ! -e /data/state/report.out || fail "the report's output file was not removed"
 docker exec "$name" chmod 700 /data/workspace/assistant/.claude/report
