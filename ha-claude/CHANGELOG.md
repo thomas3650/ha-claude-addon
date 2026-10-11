@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.10.1...v0.11.0) (2026-10-11)
+
+
+### Features
+
+* extra_mcp forwards more MCP servers through the listener ([#29](https://github.com/thomas3650/ha-claude-addon/issues/29)) ([5f2ddf2](https://github.com/thomas3650/ha-claude-addon/commit/5f2ddf2ed10854e8f6c30e8d53fafa8ba0a15c03))
+
 ## [0.10.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.10.0...v0.10.1) (2026-10-11)
 
 
