@@ -8,6 +8,7 @@ make_fixture_repo() {
   echo "private spec" > "$FIXTURE/docs/spec.md"
   echo "dev rules" > "$FIXTURE/CLAUDE.md"
   git -C "$FIXTURE" init -q -b main
+  git -C "$FIXTURE" config uploadpack.allowFilter true
   git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com add -A
   git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com commit -q -m init
 }
@@ -202,3 +203,106 @@ make_key() {
   [[ "$cmd" != *"StrictHostKeyChecking=no"* ]]
 }
 
+
+make_nested_fixture_repo() {
+  FIXTURE="$BATS_TEST_TMPDIR/fixture"
+  mkdir -p "$FIXTURE/home-assistant/assistant/.claude" "$FIXTURE/other-folder"
+  echo "nested rules" > "$FIXTURE/home-assistant/assistant/CLAUDE.md"
+  echo '{}' > "$FIXTURE/home-assistant/assistant/.claude/settings.json"
+  echo "a stack" > "$FIXTURE/other-folder/stack.yml"
+  echo "dev rules" > "$FIXTURE/CLAUDE.md"
+  git -C "$FIXTURE" init -q -b main
+  git -C "$FIXTURE" config uploadpack.allowFilter true
+  git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com add -A
+  git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com commit -q -m init
+}
+
+@test "repo_path names a nested folder, and only that folder is published" {
+  load_lib options layout sync
+  make_nested_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"home-assistant/assistant\"}"
+  ensure_layout
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "nested rules" ]
+  [ -f "$HC_WORKSPACE/.claude/settings.json" ]
+  [ ! -e "$HC_WORKSPACE/other-folder" ]
+  [ "$(cat "$HC_STATUS/last_sync_status")" = "ok" ]
+}
+
+@test "the clone is sparse: only repo_path is checked out" {
+  load_lib options layout sync
+  make_nested_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"home-assistant/assistant\"}"
+  ensure_layout
+  sync_workspace
+  [ -f "$HC_REPO/home-assistant/assistant/CLAUDE.md" ]
+  [ ! -e "$HC_REPO/other-folder" ]
+  [ "$(git -C "$HC_REPO" config core.sparseCheckout)" = "true" ]
+}
+
+@test "the default is assistant, so an install that sets nothing behaves as before" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"\"}"
+  ensure_layout
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "assistant rules" ]
+}
+
+@test "a repo_path that climbs out of the repo is refused and the workspace is kept" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  for bad in "../state" "/data" "assistant/../../state" "." "a//b"; do
+    set_options "$(jq -cn --arg u "file://$FIXTURE" --arg p "$bad" '{repo_url:$u,repo_path:$p}')"
+    run sync_workspace
+    [ "$status" -eq 0 ]
+    [ "$(cat "$HC_STATUS/last_sync_status")" = "failed: repo_path is not valid" ]
+    [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "assistant rules" ]
+  done
+}
+
+@test "a repo_path that is not in the repo keeps the previous copy and names the path" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"home-assistant/assistant\"}"
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "assistant rules" ]
+  [ "$(cat "$HC_STATUS/last_sync_status")" = "failed: no home-assistant/assistant folder" ]
+  [[ "$output" == *"no home-assistant/assistant folder"* ]]
+}
+
+@test "a repo_path changed between two syncs takes effect without a re-clone" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  mkdir -p "$FIXTURE/home-assistant"
+  git -C "$FIXTURE" mv assistant home-assistant/assistant
+  git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com commit -q -m move
+  before="$(stat -f %i "$HC_REPO/.git" 2>/dev/null || stat -c %i "$HC_REPO/.git")"
+  set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"home-assistant/assistant\"}"
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "assistant rules" ]
+  [ "$(cat "$HC_STATUS/last_sync_status")" = "ok" ]
+  after="$(stat -f %i "$HC_REPO/.git" 2>/dev/null || stat -c %i "$HC_REPO/.git")"
+  [ "$before" = "$after" ]
+}
+
+@test "a trailing slash on repo_path is accepted" {
+  load_lib options sync
+  set_options '{"repo_path":"home-assistant/assistant/"}'
+  run _repo_path
+  [ "$status" -eq 0 ]
+  [ "$output" = "home-assistant/assistant" ]
+}

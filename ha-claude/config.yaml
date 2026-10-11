@@ -32,6 +32,7 @@ options:
 schema:
   session_name: str
   repo_url: str?
+  repo_path: match(^[A-Za-z0-9._/-]+$)?
   deploy_key: password?
   extra_packages:
     - str

@@ -1,6 +1,7 @@
-# Workspace sync: fetch the repo set in repo_url into HC_REPO and publish
-# only its assistant/ folder as HC_WORKSPACE. Never fatal: on any failure the
-# previous workspace copy stays in place.
+# Workspace sync: fetch the repo set in repo_url into HC_REPO, checking out
+# only the folder repo_path names (default assistant), and publish that
+# folder as HC_WORKSPACE. Never fatal: on any failure the previous workspace
+# copy stays in place.
 
 _sync_status() {
   mkdir -p "$HC_STATUS"
@@ -57,20 +58,42 @@ _git_ssh_command() {
   printf '%s' "ssh -i $HC_STATE/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o 'UserKnownHostsFile=$HC_STATE/known_hosts $HC_KNOWN_HOSTS'"
 }
 
+# Prints the folder of the repo that becomes the workspace: repo_path from
+# the options, or assistant. The path is relative and has no empty, "." or
+# ".." segment, so it cannot reach outside the clone. Returns 1 otherwise.
+_repo_path() {
+  local p seg
+  p="$(opt '.repo_path')"
+  [[ -n "$p" ]] || p=assistant
+  p="${p%/}"
+  [[ -n "$p" && "$p" != /* ]] || return 1
+  local IFS=/
+  for seg in $p; do
+    [[ -n "$seg" && "$seg" != . && "$seg" != .. ]] || return 1
+  done
+  printf '%s' "$p"
+}
+
+# A sparse, shallow, blob-less clone: the working tree holds only repo_path,
+# and the object store only what that needs. On an existing clone the sparse
+# set is applied again, so a changed repo_path takes effect without a
+# re-clone, also on a clone an earlier version made without it.
 _fetch_repo() {
-  local url="$1"
+  local url="$1" path="$2"
   if [[ -d "$HC_REPO/.git" ]]; then
     git -C "$HC_REPO" remote set-url origin "$url" \
+      && git -C "$HC_REPO" sparse-checkout set "$path" \
       && git -C "$HC_REPO" fetch --quiet --depth 1 origin HEAD \
       && git -C "$HC_REPO" reset --quiet --hard FETCH_HEAD
   else
     rm -rf "$HC_REPO"
-    git clone --quiet --depth 1 "$url" "$HC_REPO"
+    git clone --quiet --depth 1 --filter=blob:none --sparse "$url" "$HC_REPO" \
+      && git -C "$HC_REPO" sparse-checkout set "$path"
   fi
 }
 
 _publish_workspace() {
-  local src="$HC_REPO/assistant" new="$HC_WORKSPACE.new" old="$HC_WORKSPACE.old"
+  local src="$HC_REPO/$1" new="$HC_WORKSPACE.new" old="$HC_WORKSPACE.old"
   [[ -d "$src" ]] || return 1
   rm -rf "$new" "$old"
   cp -R "$src" "$new"
@@ -85,7 +108,7 @@ _publish_workspace() {
 # shellcheck disable=SC2034  # read by the command handler
 HC_SYNC_RESULT=""
 sync_workspace() {
-  local url rc
+  local url rc path
   HC_SYNC_RESULT=kept
   url="$(opt '.repo_url')"
   mkdir -p "$HC_WORKSPACE"
@@ -93,6 +116,11 @@ sync_workspace() {
     log "sync: no repo_url set; the workspace is left as it is"
     _sync_status none
     HC_SYNC_RESULT=none
+    return 0
+  fi
+  if ! path="$(_repo_path)"; then
+    log "sync: repo_path is not a relative path inside the repo; keeping the previous workspace"
+    _sync_status "failed: repo_path is not valid"
     return 0
   fi
   if [[ "$url" != file://* ]]; then
@@ -115,14 +143,14 @@ sync_workspace() {
     GIT_SSH_COMMAND="$(_git_ssh_command)"
     export GIT_SSH_COMMAND
   fi
-  if ! _fetch_repo "$url" </dev/null 2>/dev/null; then
+  if ! _fetch_repo "$url" "$path" </dev/null 2>/dev/null; then
     log "sync: could not fetch the repo; keeping the previous workspace"
     _sync_status "failed: fetch"
     return 0
   fi
-  if ! _publish_workspace; then
-    log "sync: the repo has no assistant/ folder; keeping the previous workspace"
-    _sync_status "failed: no assistant folder"
+  if ! _publish_workspace "$path"; then
+    log "sync: the repo has no $path folder; keeping the previous workspace"
+    _sync_status "failed: no $path folder"
     return 0
   fi
   date -u +%Y-%m-%dT%H:%M:%SZ > "$HC_STATUS/last_sync"
