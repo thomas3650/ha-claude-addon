@@ -139,7 +139,7 @@ docker exec "$name" pgrep -u claude tmux >/dev/null || fail "no chat session aft
 # output file is gone afterwards. A file the Claude user cannot run is
 # not_configured, although root could run it.
 docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude && printf "%s\n" "#!/bin/sh" "echo \"report for \$1\"" "echo \"outcome: sync=ok\"" "echo \"køkken | 1\"" "echo secret-on-stderr >&2" > /data/workspace/assistant/.claude/report && chmod 755 /data/workspace/assistant/.claude/report'
-reports_before="$(logs | grep -c 'outcome: report=')"
+reports_before="$(logs | grep -c 'outcome: report=' || true)"
 printf '"report 2026-09"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
 for _ in $(seq 1 60); do
   [[ "$(logs | grep -c 'outcome: report=')" -gt "$reports_before" ]] && break
@@ -153,7 +153,7 @@ grep -q "report: end, 3 lines" <<<"$(logs)" || fail "the frame's end line is mis
 if grep -q "secret-on-stderr" <<<"$(logs)"; then fail "standard error reached the log"; fi
 docker exec "$name" test ! -e /data/state/report.out || fail "the report's output file was not removed"
 docker exec "$name" chmod 700 /data/workspace/assistant/.claude/report
-reports_before="$(logs | grep -c 'outcome: report=')"
+reports_before="$(logs | grep -c 'outcome: report=' || true)"
 printf '"report"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do
   [[ "$(logs | grep -c 'outcome: report=')" -gt "$reports_before" ]] && break
