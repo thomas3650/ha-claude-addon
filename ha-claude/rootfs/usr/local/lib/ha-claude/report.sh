@@ -33,7 +33,10 @@ report_configured() {
 # output behind a prefix, at most HC_REPORT_LINES lines of at most
 # HC_REPORT_CHARS characters, control characters (C0, DEL and C1) removed,
 # empty lines left out. Bytes that are not UTF-8 are dropped first, so the
-# counting is in characters and a cut cannot split one.
+# counting is in characters and a cut cannot split one. The C0 characters
+# and the empty lines go before the loop, in tr and grep, because the loop
+# reads a pipe one byte at a time and a flood of empty lines would keep it
+# busy for seconds on a small machine.
 _report_frame() {
   # shellcheck disable=SC2034  # read by bash itself
   local LC_ALL=C.UTF-8
@@ -46,7 +49,8 @@ _report_frame() {
     if (( n >= HC_REPORT_LINES )); then more=1; break; fi
     n=$((n + 1))
     printf 'report: | %s\n' "${line:0:HC_REPORT_CHARS}"
-  done < <(head -c "$((HC_REPORT_KIB * 1024))" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)
+  done < <(head -c "$((HC_REPORT_KIB * 1024))" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
+           | tr -d '\000-\011\013-\037\177' | grep -av '^$')
   if (( more )); then
     printf 'report: end, %d lines, more left out\n' "$n"
   else

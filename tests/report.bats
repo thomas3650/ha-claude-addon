@@ -155,6 +155,17 @@ run_it() { run_report got "$@" 2> "$BATS_TEST_TMPDIR/err"; }
   ! grep -q 'report: begin' "$BATS_TEST_TMPDIR/err"
 }
 
+@test "a flood of empty lines under the cap is framed within seconds" {
+  load_lib options env report
+  stub_report 'yes "" | head -c 262000; echo x'
+  started=$SECONDS
+  run_it
+  (( SECONDS - started < 5 ))
+  [ "$got" = "ok" ]
+  grep -qx 'report: end, 1 lines' <(logged)
+  grep -qx 'report: | x' <(logged)
+}
+
 @test "one huge line that stays under the cap is framed within seconds, and a report of 200 full lines fits" {
   load_lib options env report
   stub_report 'head -c 200000 /dev/zero | tr "\0" a; echo; echo tail'

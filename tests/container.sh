@@ -161,6 +161,17 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 grep -q "outcome: report=not_configured" <<<"$(logs)" || fail "a file the Claude user cannot run was not reported as not_configured"
+# A file that floods its output is stopped at the cap, as the Claude user
+# under runuser, and is failed within seconds.
+docker exec "$name" bash -c 'printf "%s\n" "#!/bin/sh" "yes \"\" | head -c 1000000" "echo x" > /data/workspace/assistant/.claude/report && chmod 755 /data/workspace/assistant/.claude/report'
+reports_before="$(logs | grep -c 'outcome: report=' || true)"
+printf '"report"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 20); do
+  [[ "$(logs | grep -c 'outcome: report=')" -gt "$reports_before" ]] && break
+  sleep 1
+done
+[[ "$(logs | grep -c 'outcome: report=failed')" -ge 1 ]] || fail "a file that floods its output was not stopped at the cap"
+docker exec "$name" test ! -e /data/state/report.out || fail "the flood's output file was not removed"
 docker exec "$name" rm -f /data/workspace/assistant/.claude/report
 
 # Retention: a handover file dated long ago is gone after a restart.
