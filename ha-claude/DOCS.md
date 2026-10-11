@@ -30,7 +30,8 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | Option | Meaning |
 |---|---|
 | `session_name` | The name the session has in the Claude app |
-| `repo_url` | Optional. A git repo whose `assistant/` folder becomes Claude's working folder |
+| `repo_url` | Optional. A git repo; the folder `repo_path` names in it becomes Claude's working folder |
+| `repo_path` | Optional. The folder of that repo to use, relative to its root; `assistant` when not set. Only this folder is checked out on the device |
 | `deploy_key` | A read-only SSH deploy key for that repo, without a passphrase: the private key, pasted as it is or base64-encoded on one line. The field is a single line; the add-on puts the line breaks back. Needed whenever `repo_url` is set |
 | `extra_packages` | Optional. Ubuntu packages to install at start |
 | `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; any other entry is refused. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
