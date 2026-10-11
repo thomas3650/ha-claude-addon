@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.8.1...v0.9.0) (2026-10-11)
+
+
+### Features
+
+* repo_path option, and a sparse clone of that folder only ([#23](https://github.com/thomas3650/ha-claude-addon/issues/23)) ([8e609a8](https://github.com/thomas3650/ha-claude-addon/commit/8e609a8af6ad9f5ff70b98172fa0dcd3746ce3f9))
+
 ## [0.8.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.8.0...v0.8.1) (2026-10-10)
 
 
