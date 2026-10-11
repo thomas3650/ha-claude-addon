@@ -28,6 +28,7 @@ options:
   session_name: Home
   extra_packages: []
   assistant_env: []
+  extra_mcp: []
   morning_timeout: 900
   morning_max_turns: 40
 schema:
@@ -39,5 +40,7 @@ schema:
     - str
   assistant_env:
     - match(^ASSISTANT_[A-Z0-9_]+=.*$)
+  extra_mcp:
+    - match(^[a-z][a-z0-9-]{0,31}=https?://[A-Za-z0-9._:/-]+$)
   morning_timeout: int(60,3600)
   morning_max_turns: int(1,200)

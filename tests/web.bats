@@ -185,3 +185,56 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   [ ! -e "$BATS_TEST_TMPDIR/asked" ]
   [[ "$output" != *"offers"* ]]
 }
+
+@test "extra_mcp entries render one POST-only location each, without the token" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
+  set_options '{"extra_mcp":["ha=http://a-b-ha-mcp:9583/private_x1","two=https://h:1/p"]}'
+  out="$(render_nginx_conf "$CONF")"
+  run grep '__[A-Z_]*__' <<<"$out"
+  [ "$status" -eq 1 ]
+  grep -q 'location = /mcp/ha {' <<<"$out"
+  grep -q 'location = /mcp/two {' <<<"$out"
+  block="$(sed -n '/location = \/mcp\/ha {/,/^    }/p' <<<"$out")"
+  grep -q 'if ($request_method != POST) { return 405; }' <<<"$block"
+  grep -q 'set $mcp_upstream_ha "http://a-b-ha-mcp:9583/private_x1";' <<<"$block"
+  grep -q 'proxy_pass $mcp_upstream_ha;' <<<"$block"
+  grep -q 'proxy_set_header Authorization "";' <<<"$block"
+  grep -q 'error_log stderr crit;' <<<"$block"
+  grep -q 'proxy_read_timeout 300s;' <<<"$block"
+  grep -q 'proxy_buffering off;' <<<"$block"
+  ! grep -q 'include ' <<<"$block"
+  [ "$(grep -c 'location ' <<<"$out")" -eq 8 ]
+}
+
+@test "without extra_mcp the marker is replaced by nothing" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
+  out="$(render_nginx_conf "$CONF")"
+  run grep '__[A-Z_]*__' <<<"$out"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c 'location ' <<<"$out")" -eq 6 ]
+}
+
+@test "a bad extra_mcp entry is skipped and logged by its name only" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
+  for bad in 'x=http://h/a?b=1' 'x=http://h/a;b' 'x=http://h/a|b' 'x=http://h/"; return 200; #' 'X=http://h/a' 'x y=http://h/a' '=http://h/a' 'x=file:///etc/passwd' 'x=http://h/a}'; do
+    set_options "$(jq -cn --arg e "$bad" '{extra_mcp: [$e]}')"
+    run render_nginx_conf "$CONF"
+    [[ "$output" != *"location = /mcp/"* ]]
+    [[ "$output" == *"ignoring extra_mcp entry"* ]]
+    [[ "$output" != *"return 200"* ]]
+    [[ "$output" != *"passwd"* ]]
+  done
+}
+
+@test "HC_EXTRA_MCP overrides the option, for the smoke test" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
+  set_options '{"extra_mcp":["ha=http://h/a"]}'
+  HC_EXTRA_MCP=$'x=http://127.0.0.1:7691/s\ny=http://127.0.0.1:7692/t' run render_nginx_conf "$CONF"
+  [[ "$output" == *"location = /mcp/x {"* ]]
+  [[ "$output" == *"location = /mcp/y {"* ]]
+  [[ "$output" != *"location = /mcp/ha {"* ]]
+}
