@@ -60,8 +60,7 @@ when no chat session could be started. For `sync` it is `ok` when the
 working folder was renewed or no repo is configured, `kept` when the
 working folder could not be renewed and the previous one stays in use, and
 `failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say
-why. For `report` the outcome is `ok`, `failed` or `not_configured`; see
-below.
+why. For `report`, see below.
 
 ## The morning run
 
@@ -101,7 +100,9 @@ transcript.
 
 On the command `report` the add-on runs the file `.claude/report` from the
 working folder, as the Claude user, with the scrubbed environment and the
-working folder as the current folder, for at most 30 seconds. With
+working folder as the current folder. The file is asked to stop after 30
+seconds and killed 5 seconds later; an automation that waits for the event
+needs a timeout of a minute. With
 `report 2026-09` the month is checked (`YYYY-MM`) and passed to the file as
 its only argument; any other argument is `failed` and runs nothing. The
 file must be a regular file in the working folder's own `.claude` folder,
