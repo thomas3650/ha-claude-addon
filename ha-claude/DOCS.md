@@ -35,6 +35,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `deploy_key` | A read-only SSH deploy key for that repo, without a passphrase: the private key, pasted as it is or base64-encoded on one line. The field is a single line; the add-on puts the line breaks back. Needed whenever `repo_url` is set |
 | `extra_packages` | Optional. Ubuntu packages to install at start |
 | `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; any other entry is refused. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
+| `extra_mcp` | More MCP servers for Claude, one `name=upstream` per entry, for example `ha=http://a-b-ha-mcp:9583/private_...`. The add-on forwards `POST http://127.0.0.1:7684/mcp/<name>` to the upstream, adds no credential, and keeps the upstream's address out of its log; the upstream's own secret path is its credential and stays in this option. A name is lowercase letters, digits and `-`; an upstream is `http` or `https` with no query string. Read when the add-on starts. See "Home Assistant for Claude". |
 | `morning_timeout` | The longest a morning run may take, in seconds. |
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 
@@ -144,19 +145,27 @@ integration **Model Context Protocol Server**. Inside the container it is
 
 Point Claude Code at it from the working folder's `.mcp.json`, as a server of
 type `http`. The add-on adds the token Home Assistant gave it; Claude never
-sees the token, and the listener accepts POST to that one address and nothing
+sees the token, and the listener accepts POST to that address and nothing
 else, from inside the container only.
 
-What Claude can read and control is then what you have exposed to Assist in
-Home Assistant, and nothing more. Add the integration under Settings,
-Devices & services, and review Settings, Voice assistants, Expose before
-you do: every exposed entity can be controlled. Whether Claude asks before
-it acts is decided by the permission rules in the working folder.
+Through that address Claude reads and controls what you have exposed to
+Assist in Home Assistant. Add the integration under Settings, Devices &
+services, and review Settings, Voice assistants, Expose before you do:
+every exposed entity can be controlled. Whether Claude asks before it acts
+is decided by the permission rules in the working folder.
+
+With the option `extra_mcp` the listener forwards more addresses,
+`http://127.0.0.1:7684/mcp/<name>`, each to the MCP server you named, with
+no credential added: what such a server can reach is what you gave it.
+Each gets a server of type `http` in `.mcp.json`, and its tools get rules
+like any other.
 
 The listener serves every process in the container. A shell in the panel
 can use it, and so can any shell command Claude is allowed to run, without
-a permission prompt for the tool. Keep the shell denied for Claude in the
-working folder's rules, or allow only commands that cannot reach it.
+a permission prompt for the tool: through `/mcp` with the add-on's rights
+in Home Assistant, and through `/mcp/<name>` with whatever rights that
+server has. Keep the shell denied for Claude in the working folder's rules,
+or allow only commands that cannot reach it.
 
 When the add-on starts it tries the address once and logs the status code
 of the answer, as `proxy: Home Assistant answered NNN through the
@@ -175,7 +184,10 @@ offers, as `proxy: Home Assistant offers these tools: ...`. A script you
 have exposed is offered as a tool under its own name, so that name is in
 the log too. In Claude Code a
 tool is called `mcp__<server>__<name>`, with the server's name from
-`.mcp.json`; permission rules and an agent's tool list use that form.
+`.mcp.json`; permission rules and an agent's tool list use that form. Each
+extra server is tried the same way and logged by its name:
+`proxy: <name> answered NNN through the listener` and
+`proxy: <name> offers these tools: ...`.
 
 ## Is it working?
 
@@ -199,8 +211,9 @@ Claude Code runs as the user `claude`. Its working folder is read-only, it
 cannot read the add-on's options (except the values in `assistant_env`) or
 the cloned repo, and the token Home Assistant gives the add-on is never in
 its environment. The add-on maps no
-Home Assistant folders and publishes no ports. Its one way to Home
-Assistant is described under "Home Assistant for Claude".
+Home Assistant folders and publishes no ports. Its ways to Home
+Assistant, and to any server named in `extra_mcp`, are described under
+"Home Assistant for Claude".
 
 If the working folder holds a file `.claude/managed-settings.json`, the add-on
 installs it as Claude Code's managed settings at start and on the `sync`
