@@ -133,6 +133,35 @@ for _ in $(seq 1 10); do
 done
 docker exec "$name" pgrep -u claude tmux >/dev/null || fail "no chat session after the morning command"
 
+# The report command: the working folder's .claude/report runs as the Claude
+# user with the month as its argument; what it prints reaches the log framed,
+# what it prints on standard error does not, a Danish letter survives, and the
+# output file is gone afterwards. A file the Claude user cannot run is
+# not_configured, although root could run it.
+docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude && printf "%s\n" "#!/bin/sh" "echo \"report for \$1\"" "echo \"outcome: sync=ok\"" "echo \"køkken | 1\"" "echo secret-on-stderr >&2" > /data/workspace/assistant/.claude/report && chmod 755 /data/workspace/assistant/.claude/report'
+reports_before="$(logs | grep -c 'outcome: report=' || true)"
+printf '"report 2026-09"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 60); do
+  [[ "$(logs | grep -c 'outcome: report=')" -gt "$reports_before" ]] && break
+  sleep 1
+done
+grep -q "outcome: report=ok" <<<"$(logs)" || fail "the report command did not report ok"
+grep -q "report: | report for 2026-09" <<<"$(logs)" || fail "the month did not reach the report file"
+grep -q "report: | outcome: sync=ok" <<<"$(logs)" || fail "a line that imitates the log was not framed"
+grep -q "report: | køkken | 1" <<<"$(logs)" || fail "a Danish letter did not survive the cleaning"
+grep -q "report: end, 3 lines" <<<"$(logs)" || fail "the frame's end line is missing"
+if grep -q "secret-on-stderr" <<<"$(logs)"; then fail "standard error reached the log"; fi
+docker exec "$name" test ! -e /data/state/report.out || fail "the report's output file was not removed"
+docker exec "$name" chmod 700 /data/workspace/assistant/.claude/report
+reports_before="$(logs | grep -c 'outcome: report=' || true)"
+printf '"report"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 30); do
+  [[ "$(logs | grep -c 'outcome: report=')" -gt "$reports_before" ]] && break
+  sleep 1
+done
+grep -q "outcome: report=not_configured" <<<"$(logs)" || fail "a file the Claude user cannot run was not reported as not_configured"
+docker exec "$name" rm -f /data/workspace/assistant/.claude/report
+
 # Retention: a handover file dated long ago is gone after a restart.
 docker exec "$name" runuser -u claude -- touch /data/handover/1999-01-01.md /data/handover/keep.md
 docker restart "$name" >/dev/null

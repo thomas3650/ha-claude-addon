@@ -5,7 +5,7 @@ parse_command() {
   local line="${1//$'\r'/}" word
   word="$(jq -r 'if type == "string" then . elif type == "object" then (.command // "") else "" end' \
             <<<"$line" 2>/dev/null)" || word=""
-  if [[ -z "$word" && "$line" =~ ^[a-z-]+$ ]]; then
+  if [[ -z "$word" && "$line" =~ ^[a-z-]+(\ [0-9-]+)?$ ]]; then
     word="$line"
   fi
   printf '%s' "$word"
@@ -46,10 +46,17 @@ read_command() {
 }
 
 handle_command() {
-  local word
+  local word name arg=""
   mkdir -p "$HC_STATE"
   word="$(parse_command "$1")"
-  case "$word" in
+  name="${word%% *}"
+  [[ "$word" == *" "* ]] && arg="${word#* }"
+  # Only report takes an argument; anything else with one is not a command.
+  if [[ -n "$arg" && "$name" != report ]]; then
+    log "commands: ignoring unknown command"
+    return 0
+  fi
+  case "$name" in
     ping)
       raise_outcome ping ok
       ;;
@@ -82,6 +89,13 @@ handle_command() {
         log "commands: there is no chat session to present the morning run"
       fi
       raise_outcome morning "$outcome"
+      ;;
+    report)
+      # Waited for here, like the morning run: until it has ended, no other
+      # command is handled.
+      local outcome=failed
+      run_report outcome "$arg"
+      raise_outcome report "$outcome"
       ;;
     "")
       [[ -n "${1//[[:space:]]/}" ]] && log "commands: ignoring malformed command"
