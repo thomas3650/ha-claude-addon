@@ -105,31 +105,64 @@ render_nginx_conf() {
                -e "s|__AUTH__|$HC_PROXY_DIR/proxy-auth.conf|" "$1")
 }
 
-# Posts one MCP request through the listener. Arguments: the method, then
-# curl options.
+# Posts one MCP request through the listener. Arguments: the method, the
+# address, the JSON params, then curl options.
 _proxy_post() {
-  local method="$1"; shift
+  local method="$1" url="$2" params="$3"; shift 3
   curl -s -m 15 -X POST \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\"}" \
-    "$@" http://127.0.0.1:7684/mcp 2>/dev/null
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}" \
+    "$@" "$url" 2>/dev/null
+}
+
+# Reads the tool names out of an answer, plain or as an event stream: only
+# names made of letters, digits, "_" and "-", at most the given number, on
+# one line.
+_tool_names() {
+  sed -n -e 's/^data: \{0,1\}//' -e '/^{/p' \
+    | jq -r --argjson n "$1" '[.result.tools[]?.name? | strings | select(test("^[A-Za-z0-9_-]{1,64}$"))] | .[:$n] | join(" ")' 2>/dev/null \
+    | head -n 1 | grep -E '^[A-Za-z0-9_ -]+$'
 }
 
 # Asks Home Assistant once through the listener and logs the status code.
 # What the codes mean is in DOCS.md. When Home Assistant answers, the names
 # of the tools it offers are logged as well, since permission rules are
-# written by tool name. Nothing else of an answer is logged, and a name is
-# logged only when it is made of letters, digits, "_" and "-". A script
-# that is exposed is offered as a tool under its own name.
+# written by tool name. Nothing else of an answer is logged. A script that
+# is exposed is offered as a tool under its own name.
 check_proxy() {
   local code="" names=""
-  code="$(_proxy_post ping -o /dev/null -w '%{http_code}')" || code=""
+  code="$(_proxy_post ping http://127.0.0.1:7684/mcp '{}' -o /dev/null -w '%{http_code}')" || code=""
   log "proxy: Home Assistant answered ${code:-nothing} through the listener"
   [[ "$code" == 2* ]] || return 0
-  names="$(_proxy_post tools/list | sed -n -e 's/^data: \{0,1\}//' -e '/^{/p' \
-            | jq -r '[.result.tools[]?.name? | strings | select(test("^[A-Za-z0-9_-]{1,64}$"))] | .[:80] | join(" ")' 2>/dev/null \
-            | head -n 1 | grep -E '^[A-Za-z0-9_ -]+$')" || names=""
+  names="$(_proxy_post tools/list http://127.0.0.1:7684/mcp '{}' | _tool_names 80)" || names=""
   [[ -n "$names" ]] && log "proxy: Home Assistant offers these tools: $names"
+  return 0
+}
+
+# Probes each extra_mcp entry the way an MCP client does: initialize, keep
+# the session the server names, then ask for the tools. Logs the entry's
+# name only, never its upstream.
+check_extra_mcp() {
+  local entry name url code headers session names
+  local init='{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ha-claude","version":"0"}}'
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name="${entry%%=*}"
+    url="http://127.0.0.1:7684/mcp/$name"
+    headers="$(mktemp)"
+    code="$(_proxy_post initialize "$url" "$init" -o /dev/null -w '%{http_code}' -D "$headers")" || code=""
+    log "proxy: $name answered ${code:-nothing} through the listener"
+    if [[ "$code" == 2* ]]; then
+      session="$(sed -n 's/^[Mm]cp-[Ss]ession-[Ii]d: *//p' "$headers" | tr -d '\r' | head -n 1 | grep -E '^[A-Za-z0-9._-]{1,200}$')" || session=""
+      if [[ -n "$session" ]]; then
+        names="$(_proxy_post tools/list "$url" '{}' -H "Mcp-Session-Id: $session" | _tool_names 200)" || names=""
+      else
+        names="$(_proxy_post tools/list "$url" '{}' | _tool_names 200)" || names=""
+      fi
+      [[ -n "$names" ]] && log "proxy: $name offers these tools: $names"
+    fi
+    rm -f "$headers"
+  done < <(extra_mcp_entries)
   return 0
 }

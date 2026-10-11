@@ -238,3 +238,47 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   [[ "$output" == *"location = /mcp/y {"* ]]
   [[ "$output" != *"location = /mcp/ha {"* ]]
 }
+
+@test "each extra_mcp entry is probed at start with a handshake, and its tools are logged by the entry's name" {
+  load_lib options web
+  set_options '{"extra_mcp":["ha=http://h:1/private_s3cret"]}'
+  curl() {
+    printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"
+    if [[ "$*" == *initialize* ]]; then
+      hf="$(awk '{for (i = 1; i <= NF; i++) if ($i == "-D") print $(i + 1)}' <<<"$*")"
+      [[ -n "$hf" ]] && printf 'HTTP/1.1 200 OK\r\nMcp-Session-Id: sess-42\r\n\r\n' > "$hf"
+      printf '200'
+    elif [[ "$*" == *tools/list* ]]; then
+      printf '%s' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"ha_get_state"},{"name":"ha_call_service"},{"name":"bad name"}]}}'
+    fi
+  }
+  run check_extra_mcp
+  [[ "$output" == *"proxy: ha answered 200 through the listener"* ]]
+  [[ "$output" == *"proxy: ha offers these tools: ha_get_state ha_call_service"* ]]
+  [[ "$output" != *"private_s3cret"* ]]
+  [[ "$output" != *"bad name"* ]]
+  grep -q 'http://127.0.0.1:7684/mcp/ha' "$BATS_TEST_TMPDIR/curl-args"
+  grep -q 'Mcp-Session-Id: sess-42' "$BATS_TEST_TMPDIR/curl-args"
+}
+
+@test "an extra entry that does not answer is logged as nothing, and no tool list is asked for" {
+  load_lib options web
+  set_options '{"extra_mcp":["ha=http://h:1/p"]}'
+  curl() { [[ "$*" != *tools/list* ]] || echo asked >> "$BATS_TEST_TMPDIR/asked"; return 7; }
+  run check_extra_mcp
+  [[ "$output" == *"proxy: ha answered nothing through the listener"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/asked" ]
+}
+
+@test "the tool names of an extra entry are capped at 200" {
+  load_lib options web
+  set_options '{"extra_mcp":["ha=http://h:1/p"]}'
+  many="$(jq -cn '[range(0; 250) | {name: ("t" + tostring)}] | {result: {tools: .}}')"
+  curl() {
+    if [[ "$*" == *initialize* ]]; then printf '200'
+    elif [[ "$*" == *tools/list* ]]; then printf '%s' "$many"; fi
+  }
+  run check_extra_mcp
+  [[ "$output" == *"t199"* ]]
+  [[ "$output" != *"t200"* ]]
+}
