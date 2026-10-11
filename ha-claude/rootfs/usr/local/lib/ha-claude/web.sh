@@ -21,16 +21,27 @@ proxy_resolver() {
 # a broken configuration, and with it no panel. A refused entry is logged by
 # its name and never by its upstream, which may hold a secret path.
 extra_mcp_entries() {
-  local re='^[a-z][a-z0-9-]{0,31}=https?://[A-Za-z0-9._:/-]+$' entry name
+  local re='^[a-z][a-z0-9-]{0,31}=https?://[A-Za-z0-9._:/-]+$' entry name seen=" " quiet="${1:-}"
   while IFS= read -r entry; do
     [[ -n "$entry" ]] || continue
-    if [[ "$entry" =~ $re ]]; then
-      printf '%s\n' "$entry"
-    else
-      name="${entry%%=*}"
-      name="${name//[^a-z0-9-]/}"
-      log "proxy: ignoring extra_mcp entry '${name:0:32}'"
+    name="${entry%%=*}"
+    if [[ ! "$entry" =~ $re ]]; then
+      # The name is logged only when it is a name: an entry without "=" is
+      # all "name", and may be a secret path.
+      if [[ "$name" =~ ^[a-z][a-z0-9-]{0,31}$ ]]; then
+        [[ "$quiet" == quiet ]] || log "proxy: ignoring extra_mcp entry '$name'"
+      else
+        [[ "$quiet" == quiet ]] || log "proxy: ignoring an extra_mcp entry with no usable name"
+      fi
+      continue
     fi
+    # Two locations with one name would stop nginx, and with it the panel.
+    if [[ "$seen" == *" $name "* ]]; then
+      [[ "$quiet" == quiet ]] || log "proxy: ignoring a second extra_mcp entry named '$name'"
+      continue
+    fi
+    seen+="$name "
+    printf '%s\n' "$entry"
   done < <(if [[ -n "${HC_EXTRA_MCP:-}" ]]; then printf '%s\n' "$HC_EXTRA_MCP"
            elif [[ -f "$HC_OPTIONS" ]]; then jq -r '.extra_mcp[]? | strings' "$HC_OPTIONS" 2>/dev/null; fi)
 }
@@ -116,6 +127,17 @@ _proxy_post() {
     "$@" "$url" 2>/dev/null
 }
 
+# Posts one MCP notification through the listener: no id, no answer
+# expected. Arguments: the method, the address, then curl options.
+_proxy_notify() {
+  local method="$1" url="$2"; shift 2
+  curl -s -m 15 -X POST \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\"}" \
+    "$@" -o /dev/null "$url" 2>/dev/null
+}
+
 # Reads the tool names out of an answer, plain or as an event stream: only
 # names made of letters, digits, "_" and "-", at most the given number, on
 # one line.
@@ -141,28 +163,32 @@ check_proxy() {
 }
 
 # Probes each extra_mcp entry the way an MCP client does: initialize, keep
-# the session the server names, then ask for the tools. Logs the entry's
-# name only, never its upstream.
+# the session the server names, say that the client is initialized, then
+# ask for the tools. Logs the entry's name only, never its upstream. A
+# refused entry was already logged when the configuration was rendered.
 check_extra_mcp() {
   local entry name url code headers session names
+  local -a hdr
   local init='{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ha-claude","version":"0"}}'
   while IFS= read -r entry; do
     [[ -n "$entry" ]] || continue
     name="${entry%%=*}"
     url="http://127.0.0.1:7684/mcp/$name"
     headers="$(mktemp)"
-    code="$(_proxy_post initialize "$url" "$init" -o /dev/null -w '%{http_code}' -D "$headers")" || code=""
+    # The code is kept when one came back, also when curl then timed out
+    # on a stream the server holds open.
+    code="$(_proxy_post initialize "$url" "$init" -o /dev/null -w '%{http_code}' -D "$headers")" || true
+    [[ "$code" =~ ^[0-9]{3}$ && "$code" != 000 ]] || code=""
     log "proxy: $name answered ${code:-nothing} through the listener"
     if [[ "$code" == 2* ]]; then
-      session="$(sed -n 's/^[Mm]cp-[Ss]ession-[Ii]d: *//p' "$headers" | tr -d '\r' | head -n 1 | grep -E '^[A-Za-z0-9._-]{1,200}$')" || session=""
-      if [[ -n "$session" ]]; then
-        names="$(_proxy_post tools/list "$url" '{}' -H "Mcp-Session-Id: $session" | _tool_names 200)" || names=""
-      else
-        names="$(_proxy_post tools/list "$url" '{}' | _tool_names 200)" || names=""
-      fi
+      session="$(grep -i '^mcp-session-id:' "$headers" | head -n 1 | sed 's/^[^:]*: *//' | tr -d '\r' | grep -E '^[A-Za-z0-9._-]{1,200}$')" || session=""
+      hdr=()
+      [[ -n "$session" ]] && hdr=(-H "Mcp-Session-Id: $session")
+      _proxy_notify notifications/initialized "$url" "${hdr[@]}" || true
+      names="$(_proxy_post tools/list "$url" '{}' "${hdr[@]}" | _tool_names 200)" || names=""
       [[ -n "$names" ]] && log "proxy: $name offers these tools: $names"
     fi
     rm -f "$headers"
-  done < <(extra_mcp_entries)
+  done < <(extra_mcp_entries quiet)
   return 0
 }

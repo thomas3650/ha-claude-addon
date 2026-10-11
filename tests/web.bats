@@ -189,21 +189,22 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
 @test "extra_mcp entries render one POST-only location each, without the token" {
   load_lib options web
   export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
-  set_options '{"extra_mcp":["ha=http://a-b-ha-mcp:9583/private_x1","two=https://h:1/p"]}'
+  set_options '{"extra_mcp":["tools=http://my-mcp:8000/private_x1","two=https://h:1/p"]}'
   out="$(render_nginx_conf "$CONF")"
   run grep '__[A-Z_]*__' <<<"$out"
   [ "$status" -eq 1 ]
-  grep -q 'location = /mcp/ha {' <<<"$out"
+  grep -q 'location = /mcp/tools {' <<<"$out"
   grep -q 'location = /mcp/two {' <<<"$out"
-  block="$(sed -n '/location = \/mcp\/ha {/,/^    }/p' <<<"$out")"
+  block="$(sed -n '/location = \/mcp\/tools {/,/^    }/p' <<<"$out")"
   grep -q 'if ($request_method != POST) { return 405; }' <<<"$block"
-  grep -q 'set $mcp_upstream_ha "http://a-b-ha-mcp:9583/private_x1";' <<<"$block"
-  grep -q 'proxy_pass $mcp_upstream_ha;' <<<"$block"
+  grep -q 'set $mcp_upstream_tools "http://my-mcp:8000/private_x1";' <<<"$block"
+  grep -q 'proxy_pass $mcp_upstream_tools;' <<<"$block"
   grep -q 'proxy_set_header Authorization "";' <<<"$block"
   grep -q 'error_log stderr crit;' <<<"$block"
   grep -q 'proxy_read_timeout 300s;' <<<"$block"
   grep -q 'proxy_buffering off;' <<<"$block"
-  ! grep -q 'include ' <<<"$block"
+  run grep -q 'include ' <<<"$block"
+  [ "$status" -eq 1 ]
   [ "$(grep -c 'location ' <<<"$out")" -eq 8 ]
 }
 
@@ -223,7 +224,7 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
     set_options "$(jq -cn --arg e "$bad" '{extra_mcp: [$e]}')"
     run render_nginx_conf "$CONF"
     [[ "$output" != *"location = /mcp/"* ]]
-    [[ "$output" == *"ignoring extra_mcp entry"* ]]
+    [[ "$output" == *"ignoring extra_mcp entry"* || "$output" == *"no usable name"* ]]
     [[ "$output" != *"return 200"* ]]
     [[ "$output" != *"passwd"* ]]
   done
@@ -232,16 +233,16 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
 @test "HC_EXTRA_MCP overrides the option, for the smoke test" {
   load_lib options web
   export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
-  set_options '{"extra_mcp":["ha=http://h/a"]}'
+  set_options '{"extra_mcp":["tools=http://h/a"]}'
   HC_EXTRA_MCP=$'x=http://127.0.0.1:7691/s\ny=http://127.0.0.1:7692/t' run render_nginx_conf "$CONF"
   [[ "$output" == *"location = /mcp/x {"* ]]
   [[ "$output" == *"location = /mcp/y {"* ]]
-  [[ "$output" != *"location = /mcp/ha {"* ]]
+  [[ "$output" != *"location = /mcp/tools {"* ]]
 }
 
 @test "each extra_mcp entry is probed at start with a handshake, and its tools are logged by the entry's name" {
   load_lib options web
-  set_options '{"extra_mcp":["ha=http://h:1/private_s3cret"]}'
+  set_options '{"extra_mcp":["tools=http://h:1/private_s3cret"]}'
   curl() {
     printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"
     if [[ "$*" == *initialize* ]]; then
@@ -253,26 +254,27 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
     fi
   }
   run check_extra_mcp
-  [[ "$output" == *"proxy: ha answered 200 through the listener"* ]]
-  [[ "$output" == *"proxy: ha offers these tools: ha_get_state ha_call_service"* ]]
+  [[ "$output" == *"proxy: tools answered 200 through the listener"* ]]
+  [[ "$output" == *"proxy: tools offers these tools: ha_get_state ha_call_service"* ]]
   [[ "$output" != *"private_s3cret"* ]]
   [[ "$output" != *"bad name"* ]]
-  grep -q 'http://127.0.0.1:7684/mcp/ha' "$BATS_TEST_TMPDIR/curl-args"
+  grep -q 'http://127.0.0.1:7684/mcp/tools' "$BATS_TEST_TMPDIR/curl-args"
+  [ "$(grep -n 'notifications/initialized' "$BATS_TEST_TMPDIR/curl-args" | head -n 1 | cut -d: -f1)" -lt "$(grep -n 'tools/list' "$BATS_TEST_TMPDIR/curl-args" | head -n 1 | cut -d: -f1)" ]
   grep -q 'Mcp-Session-Id: sess-42' "$BATS_TEST_TMPDIR/curl-args"
 }
 
 @test "an extra entry that does not answer is logged as nothing, and no tool list is asked for" {
   load_lib options web
-  set_options '{"extra_mcp":["ha=http://h:1/p"]}'
+  set_options '{"extra_mcp":["tools=http://h:1/p"]}'
   curl() { [[ "$*" != *tools/list* ]] || echo asked >> "$BATS_TEST_TMPDIR/asked"; return 7; }
   run check_extra_mcp
-  [[ "$output" == *"proxy: ha answered nothing through the listener"* ]]
+  [[ "$output" == *"proxy: tools answered nothing through the listener"* ]]
   [ ! -e "$BATS_TEST_TMPDIR/asked" ]
 }
 
 @test "the tool names of an extra entry are capped at 200" {
   load_lib options web
-  set_options '{"extra_mcp":["ha=http://h:1/p"]}'
+  set_options '{"extra_mcp":["tools=http://h:1/p"]}'
   many="$(jq -cn '[range(0; 250) | {name: ("t" + tostring)}] | {result: {tools: .}}')"
   curl() {
     if [[ "$*" == *initialize* ]]; then printf '200'
@@ -281,4 +283,17 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   run check_extra_mcp
   [[ "$output" == *"t199"* ]]
   [[ "$output" != *"t200"* ]]
+}
+
+@test "a second entry with the same name is skipped, so nginx keeps starting; an entry without a name is logged without its value" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
+  set_options '{"extra_mcp":["tools=http://h:1/a","tools=http://h:2/b","http://h:3/private_s3cret"]}'
+  run render_nginx_conf "$CONF"
+  [ "$(grep -c 'location = /mcp/tools {' <<<"$output")" -eq 1 ]
+  [[ "$output" == *'set $mcp_upstream_tools "http://h:1/a";'* ]]
+  [[ "$output" == *"ignoring a second extra_mcp entry named 'tools'"* ]]
+  [[ "$output" == *"ignoring an extra_mcp entry with no usable name"* ]]
+  [[ "$output" != *"private_s3cret"* ]]
+  [[ "$output" != *"s3cret"* ]]
 }

@@ -32,7 +32,7 @@ load helpers
 @test "the extra_mcp schema accepts a name=upstream entry and refuses characters nginx or sed would read" {
   re="$(sed -n 's/^    - match(\(.*\))$/\1/p' "$BATS_TEST_DIRNAME/../ha-claude/config.yaml" | grep 'https' | head -n 1)"
   [ -n "$re" ]
-  [[ "ha=http://a-b-ha-mcp:9583/private_x1" =~ $re ]]
+  [[ "tools=http://my-mcp:8000/private_x1" =~ $re ]]
   [[ "two=https://h:1/p" =~ $re ]]
   for bad in 'x=http://h/a;b' 'x=http://h/a|b' 'x=http://h/a}' 'x=http://h/a b' 'x=http://h/a?b' 'x=http://h/"' 'X=http://h/a' '=http://h/a' 'x=ftp://h/a'; do
     if [[ "$bad" =~ $re ]]; then echo "accepted: $bad"; false; fi
