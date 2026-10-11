@@ -289,14 +289,13 @@ make_nested_fixture_repo() {
   mkdir -p "$FIXTURE/home-assistant"
   git -C "$FIXTURE" mv assistant home-assistant/assistant
   git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com commit -q -m move
-  before="$(stat -f %i "$HC_REPO/.git" 2>/dev/null || stat -c %i "$HC_REPO/.git")"
+  touch "$HC_REPO/.git/still-the-same-clone"
   set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"home-assistant/assistant\"}"
   run sync_workspace
   [ "$status" -eq 0 ]
   [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "assistant rules" ]
   [ "$(cat "$HC_STATUS/last_sync_status")" = "ok" ]
-  after="$(stat -f %i "$HC_REPO/.git" 2>/dev/null || stat -c %i "$HC_REPO/.git")"
-  [ "$before" = "$after" ]
+  [ -e "$HC_REPO/.git/still-the-same-clone" ]
 }
 
 @test "a trailing slash on repo_path is accepted" {
