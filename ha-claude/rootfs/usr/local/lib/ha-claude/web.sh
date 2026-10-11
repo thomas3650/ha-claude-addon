@@ -14,6 +14,62 @@ proxy_resolver() {
   printf '%s' "${ip:-127.0.0.11}"
 }
 
+# Prints the usable entries of the option extra_mcp, one per line, as
+# name=upstream. HC_EXTRA_MCP, newline-separated, replaces the option for
+# the smoke test. An entry is checked against the schema's own class here
+# too: only root sets it, but a character with a meaning to nginx would give
+# a broken configuration, and with it no panel. A refused entry is logged by
+# its name and never by its upstream, which may hold a secret path.
+extra_mcp_entries() {
+  local re='^[a-z][a-z0-9-]{0,31}=https?://[A-Za-z0-9._:/-]+$' entry name seen=" " quiet="${1:-}"
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name="${entry%%=*}"
+    if [[ ! "$entry" =~ $re ]]; then
+      # The name is logged only when it is a name: an entry without "=" is
+      # all "name", and may be a secret path.
+      if [[ "$name" =~ ^[a-z][a-z0-9-]{0,31}$ ]]; then
+        [[ "$quiet" == quiet ]] || log "proxy: ignoring extra_mcp entry '$name'"
+      else
+        [[ "$quiet" == quiet ]] || log "proxy: ignoring an extra_mcp entry with no usable name"
+      fi
+      continue
+    fi
+    # Two locations with one name would stop nginx, and with it the panel.
+    if [[ "$seen" == *" $name "* ]]; then
+      [[ "$quiet" == quiet ]] || log "proxy: ignoring a second extra_mcp entry named '$name'"
+      continue
+    fi
+    seen+="$name "
+    printf '%s\n' "$entry"
+  done < <(if [[ -n "${HC_EXTRA_MCP:-}" ]]; then printf '%s\n' "$HC_EXTRA_MCP"
+           elif [[ -f "$HC_OPTIONS" ]]; then jq -r '.extra_mcp[]? | strings' "$HC_OPTIONS" 2>/dev/null; fi)
+}
+
+# Prints one nginx location per extra_mcp entry: POST only, no token, the
+# upstream's errors kept out of the log, a longer read timeout than /mcp.
+render_extra_mcp() {
+  local entry name upstream var
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name="${entry%%=*}"
+    upstream="${entry#*=}"
+    var="mcp_upstream_${name//-/_}"
+    printf '    location = /mcp/%s {\n' "$name"
+    # shellcheck disable=SC2016  # nginx's variable, not the shell's
+    printf '      if ($request_method != POST) { return 405; }\n'
+    printf '      error_log stderr crit;\n'
+    printf '      set $%s "%s";\n' "$var" "$upstream"
+    printf '      proxy_pass $%s;\n' "$var"
+    printf '      proxy_http_version 1.1;\n'
+    printf '      proxy_set_header Connection "";\n'
+    printf '      proxy_set_header Authorization "";\n'
+    printf '      proxy_buffering off;\n'
+    printf '      proxy_read_timeout 300s;\n'
+    printf '    }\n'
+  done < <(extra_mcp_entries)
+}
+
 # Writes the nginx directive that sets the token. A token with a character
 # that could end the string is not used, and is never logged.
 write_proxy_auth() {
@@ -37,7 +93,7 @@ write_proxy_auth() {
 
 # render_nginx_conf <template> - prints the configuration.
 render_nginx_conf() {
-  local allow="allow 172.30.32.2; deny all;" upstream="$HC_MCP_UPSTREAM"
+  local allow="allow 172.30.32.2; deny all;" upstream="$HC_MCP_UPSTREAM" line
   # HC_INGRESS_ALLOW=all is for the container smoke test only.
   [[ "${HC_INGRESS_ALLOW:-}" == "all" ]] && allow=""
   # Only root sets the upstream, but a character with a meaning to sed or to
@@ -46,37 +102,93 @@ render_nginx_conf() {
     log "proxy: the upstream is not usable; using $HC_MCP_DEFAULT"
     upstream="$HC_MCP_DEFAULT"
   fi
-  sed -e "s|__ALLOW__|$allow|" \
-      -e "s|__RESOLVER__|$(proxy_resolver)|" \
-      -e "s|__UPSTREAM__|$upstream|" \
-      -e "s|__AUTH__|$HC_PROXY_DIR/proxy-auth.conf|" "$1"
+  # The extra locations are printed in place of their mark, never through
+  # sed: an entry is checked, but it is not sed's to parse.
+  while IFS= read -r line; do
+    if [[ "$line" == *__EXTRA_MCP__* ]]; then
+      render_extra_mcp
+    else
+      printf '%s\n' "$line"
+    fi
+  done < <(sed -e "s|__ALLOW__|$allow|" \
+               -e "s|__RESOLVER__|$(proxy_resolver)|" \
+               -e "s|__UPSTREAM__|$upstream|" \
+               -e "s|__AUTH__|$HC_PROXY_DIR/proxy-auth.conf|" "$1")
 }
 
-# Posts one MCP request through the listener. Arguments: the method, then
-# curl options.
+# Posts one MCP request through the listener. Arguments: the method, the
+# address, the JSON params, then curl options.
 _proxy_post() {
-  local method="$1"; shift
+  local method="$1" url="$2" params="$3"; shift 3
   curl -s -m 15 -X POST \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\"}" \
-    "$@" http://127.0.0.1:7684/mcp 2>/dev/null
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}" \
+    "$@" "$url" 2>/dev/null
+}
+
+# Posts one MCP notification through the listener: no id, no answer
+# expected. Arguments: the method, the address, then curl options.
+_proxy_notify() {
+  local method="$1" url="$2"; shift 2
+  curl -s -m 15 -X POST \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"$method\"}" \
+    "$@" -o /dev/null "$url" 2>/dev/null
+}
+
+# Reads the tool names out of an answer, plain or as an event stream: only
+# names made of letters, digits, "_" and "-", at most the given number, on
+# one line.
+_tool_names() {
+  sed -n -e 's/^data: \{0,1\}//' -e '/^{/p' \
+    | jq -r --argjson n "$1" '[.result.tools[]?.name? | strings | select(test("^[A-Za-z0-9_-]{1,64}$"))] | .[:$n] | join(" ")' 2>/dev/null \
+    | head -n 1 | grep -E '^[A-Za-z0-9_ -]+$'
 }
 
 # Asks Home Assistant once through the listener and logs the status code.
 # What the codes mean is in DOCS.md. When Home Assistant answers, the names
 # of the tools it offers are logged as well, since permission rules are
-# written by tool name. Nothing else of an answer is logged, and a name is
-# logged only when it is made of letters, digits, "_" and "-". A script
-# that is exposed is offered as a tool under its own name.
+# written by tool name. Nothing else of an answer is logged. A script that
+# is exposed is offered as a tool under its own name.
 check_proxy() {
   local code="" names=""
-  code="$(_proxy_post ping -o /dev/null -w '%{http_code}')" || code=""
+  code="$(_proxy_post ping http://127.0.0.1:7684/mcp '{}' -o /dev/null -w '%{http_code}')" || code=""
   log "proxy: Home Assistant answered ${code:-nothing} through the listener"
   [[ "$code" == 2* ]] || return 0
-  names="$(_proxy_post tools/list | sed -n -e 's/^data: \{0,1\}//' -e '/^{/p' \
-            | jq -r '[.result.tools[]?.name? | strings | select(test("^[A-Za-z0-9_-]{1,64}$"))] | .[:80] | join(" ")' 2>/dev/null \
-            | head -n 1 | grep -E '^[A-Za-z0-9_ -]+$')" || names=""
+  names="$(_proxy_post tools/list http://127.0.0.1:7684/mcp '{}' | _tool_names 80)" || names=""
   [[ -n "$names" ]] && log "proxy: Home Assistant offers these tools: $names"
+  return 0
+}
+
+# Probes each extra_mcp entry the way an MCP client does: initialize, keep
+# the session the server names, say that the client is initialized, then
+# ask for the tools. Logs the entry's name only, never its upstream. A
+# refused entry was already logged when the configuration was rendered.
+check_extra_mcp() {
+  local entry name url code headers session names
+  local -a hdr
+  local init='{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ha-claude","version":"0"}}'
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name="${entry%%=*}"
+    url="http://127.0.0.1:7684/mcp/$name"
+    headers="$(mktemp)"
+    # The code is kept when one came back, also when curl then timed out
+    # on a stream the server holds open.
+    code="$(_proxy_post initialize "$url" "$init" -o /dev/null -w '%{http_code}' -D "$headers")" || true
+    [[ "$code" =~ ^[0-9]{3}$ && "$code" != 000 ]] || code=""
+    log "proxy: $name answered ${code:-nothing} through the listener"
+    if [[ "$code" == 2* ]]; then
+      session="$(grep -i '^mcp-session-id:' "$headers" | head -n 1 | sed 's/^[^:]*: *//' | tr -d '\r' | grep -E '^[A-Za-z0-9._-]{1,200}$')" || session=""
+      hdr=()
+      [[ -n "$session" ]] && hdr=(-H "Mcp-Session-Id: $session")
+      _proxy_notify notifications/initialized "$url" "${hdr[@]}" || true
+      names="$(_proxy_post tools/list "$url" '{}' "${hdr[@]}" | _tool_names 200)" || names=""
+      [[ -n "$names" ]] && log "proxy: $name offers these tools: $names"
+    fi
+    rm -f "$headers"
+  done < <(extra_mcp_entries quiet)
   return 0
 }

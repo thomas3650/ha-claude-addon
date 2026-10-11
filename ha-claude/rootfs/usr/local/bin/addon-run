@@ -45,7 +45,7 @@ sync_workspace
 ensure_layout
 install_managed_settings
 start_ingress
-check_proxy &
+{ check_proxy; check_extra_mcp; } &
 start_chat
 logged_in || log "Claude Code is not logged in: open the add-on's web terminal and follow the steps shown"
 prune_handover

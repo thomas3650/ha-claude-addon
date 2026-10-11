@@ -39,7 +39,8 @@ http {
   # loopback, forwards one address to Home Assistant's MCP Server endpoint
   # and adds the token Home Assistant gave the add-on, which Claude never
   # sees. The upstream is a variable, so its name is looked up for each
-  # request and not when nginx starts.
+  # request and not when nginx starts. Extra locations under /mcp/<name>
+  # forward to the upstreams of the option extra_mcp, without the token.
   server {
     listen 127.0.0.1:7684;
     resolver __RESOLVER__ valid=30s ipv6=off;
@@ -54,6 +55,7 @@ http {
       proxy_buffering off;
       proxy_read_timeout 120s;
     }
+__EXTRA_MCP__
     location / { return 404; }
   }
 }

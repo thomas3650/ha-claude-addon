@@ -192,7 +192,8 @@ docker rm -f "$name" >/dev/null
 # The token is the add-on's also when the client sent another, and the
 # client's query string is dropped.
 docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all \
-  -e HC_MCP_UPSTREAM=http://127.0.0.1:7690/core/api/mcp "$image" >/dev/null
+  -e HC_MCP_UPSTREAM=http://127.0.0.1:7690/core/api/mcp \
+  -e HC_EXTRA_MCP=x=http://127.0.0.1:7691/private_s3cret "$image" >/dev/null
 for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
   sleep 1
@@ -206,6 +207,23 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 [[ "$sent" == "POST /core/api/mcp Bearer smoke-secret" ]] || fail "the listener sent on '$sent'"
+
+# An extra MCP server: the listener forwards POST /mcp/x to it without the
+# add-on's token, answers GET and other names itself, and with the server
+# down neither its address nor its secret path reaches the log.
+[[ "$(code -X POST http://127.0.0.1:7684/mcp/x)" == 502 ]] || fail "the extra address was not forwarded while its server is down"
+if grep -q "7691\|private_s3cret" <<<"$(logs)"; then fail "the extra server's address reached the log"; fi
+[[ "$(code http://127.0.0.1:7684/mcp/x)" == 405 ]] || fail "the extra address forwarded something other than a POST"
+[[ "$(code -X POST http://127.0.0.1:7684/mcp/y)" == 404 ]] || fail "an extra name that is not configured was forwarded"
+docker exec -d "$name" node -e 'require("http").createServer((q, s) => s.end(q.method + " " + q.url + " " + (q.headers.authorization || "none"))).listen(7691, "127.0.0.1")' || fail "the extra stand-in did not start"
+sent=""
+for _ in $(seq 1 10); do
+  sent="$(docker exec -u claude "$name" curl -s -m 10 -X POST -H 'Authorization: Bearer other' -d '{}' 'http://127.0.0.1:7684/mcp/x')" || true
+  [[ "$sent" == POST* ]] && break
+  sleep 1
+done
+[[ "$sent" == "POST /private_s3cret none" ]] || fail "the listener sent on to the extra server '$sent'"
+grep -q "proxy: x answered" <<<"$(logs)" || fail "the extra server was not probed at start"
 
 docker rm -f "$name" >/dev/null
 echo "container smoke test passed"
