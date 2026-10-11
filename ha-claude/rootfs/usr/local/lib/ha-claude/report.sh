@@ -8,6 +8,12 @@
 : "${HC_REPORT_GRACE:=5}"
 : "${HC_REPORT_LINES:=200}"
 : "${HC_REPORT_CHARS:=200}"
+# The most the file may print, in KiB: 200 lines of 200 characters need
+# 40, and the frame reads a pipe one byte at a time, so a flood of empty
+# lines must be stopped before it is read. The same cap on both ends: the
+# file is cut off at it (SIGXFSZ, so the outcome is failed), and the frame
+# never reads past it.
+: "${HC_REPORT_KIB:=256}"
 HC_REPORT_FILE=.claude/report
 
 # True when the report file is a regular file, not a link, in the working
@@ -27,7 +33,10 @@ report_configured() {
 # output behind a prefix, at most HC_REPORT_LINES lines of at most
 # HC_REPORT_CHARS characters, control characters (C0, DEL and C1) removed,
 # empty lines left out. Bytes that are not UTF-8 are dropped first, so the
-# counting is in characters and a cut cannot split one.
+# counting is in characters and a cut cannot split one. The C0 characters
+# and the empty lines go before the loop, in tr and grep, because the loop
+# reads a pipe one byte at a time and a flood of empty lines would keep it
+# busy for seconds on a small machine.
 _report_frame() {
   # shellcheck disable=SC2034  # read by bash itself
   local LC_ALL=C.UTF-8
@@ -40,7 +49,8 @@ _report_frame() {
     if (( n >= HC_REPORT_LINES )); then more=1; break; fi
     n=$((n + 1))
     printf 'report: | %s\n' "${line:0:HC_REPORT_CHARS}"
-  done < <(iconv -c -f UTF-8 -t UTF-8)
+  done < <(head -c "$((HC_REPORT_KIB * 1024))" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
+           | tr -d '\000-\011\013-\037\177' | grep -av '^$')
   if (( more )); then
     printf 'report: end, %d lines, more left out\n' "$n"
   else
@@ -71,7 +81,8 @@ run_report() {
   mkdir -p "$HC_STATE"
   rm -f "$_rr_out"
   ( umask 077; : > "$_rr_out" )
-  ( cd "$HC_WORKSPACE" && as_claude env HC_LIMIT_GRACE="$HC_REPORT_GRACE" \
+  # Both the soft and the hard file-size limit, so the file cannot raise it.
+  ( cd "$HC_WORKSPACE" && ulimit -f "$HC_REPORT_KIB" && as_claude env HC_LIMIT_GRACE="$HC_REPORT_GRACE" \
       "$HC_LIMIT_BIN" "$HC_REPORT_LIMIT" "$_rr_src" "${_rr_args[@]}" \
   ) </dev/null >>"$_rr_out" 2>/dev/null &
   wait $! || _rr_rc=$?

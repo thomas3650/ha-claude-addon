@@ -122,7 +122,8 @@ What the file prints on standard output reaches the add-on's log, framed:
 Every line of the output starts with `report: | `, so it can never look like
 a line of the add-on's own. At most 200 lines are written, each cut at 200
 characters; when there are more, the last line says `report: end, 200
-lines, more left out`. Control characters are removed, empty lines are left
+lines, more left out`. A file that prints more than 256 KiB is stopped
+there and is `failed`. Control characters are removed, empty lines are left
 out. What the file prints on standard error is thrown away. A file that
 ends with an error, or is stopped at the time limit (status 124), writes
 nothing to the log but one line with the status, and the outcome is
