@@ -48,12 +48,14 @@ done
 grep -q "proxy: Home Assistant answered 502 through the listener" <<<"$(logs)" || fail "the check at start did not log the answer"
 
 # The token is in a file the Claude user cannot read, and not in the
-# configuration, which it can.
+# configuration. The configuration is for root only too: an extra server's
+# address in it may hold a secret path.
 docker exec "$name" grep -q 'Bearer smoke-secret' /run/ha-claude/proxy-auth.conf || fail "the token file does not hold the token"
 docker exec -u claude "$name" cat /run/ha-claude/proxy-auth.conf >/dev/null 2>&1 && fail "the Claude user can read the token file"
-conf="$(docker exec -u claude "$name" cat /etc/nginx/nginx.conf)" || fail "the Claude user cannot read the nginx configuration"
+conf="$(docker exec "$name" cat /etc/nginx/nginx.conf)" || fail "the nginx configuration cannot be read"
 grep -q 'mcp_upstream' <<<"$conf" || fail "the nginx configuration has no upstream"
-if grep -q 'smoke-secret' <<<"$conf"; then fail "the token is in a file the Claude user can read"; fi
+if grep -q 'smoke-secret' <<<"$conf"; then fail "the token is in the nginx configuration"; fi
+docker exec -u claude "$name" cat /etc/nginx/nginx.conf >/dev/null 2>&1 && fail "the Claude user can read nginx's configuration"
 docker exec -u claude "$name" nginx -T >/dev/null 2>&1 && fail "the Claude user can have nginx print its configuration"
 
 # The shell behind the second link runs as the Claude user, without the token.
