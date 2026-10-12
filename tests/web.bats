@@ -244,15 +244,37 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
 @test "a token that could end the string is not used and never logged; a token for no entry is logged by its name" {
   load_lib options web
   export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run"
-  set_options "$(jq -cn '{extra_mcp: ["safe=https://h/b"], extra_mcp_auth: ["safe=x\"; return 200; #", "other=s3cret", "nonamesecret", "BAD NAME=s3cret2"]}')"
+  set_options "$(jq -cn '{extra_mcp: ["safe=https://h/b"], extra_mcp_auth: ["safe=x\"; return 200; #", "other=s3cret", "nonamesecret", "BAD NAME=s3cret2", "mfrggzdfmztwq2lk===="]}')"
   run write_extra_auth
   [ "$status" -eq 0 ]
   [ "$(cat "$HC_PROXY_DIR/extra-auth-safe.conf")" = 'proxy_set_header Authorization "";' ]
   [[ "$output" == *"the token for 'safe' is not usable"* ]]
-  [[ "$output" == *"ignoring extra_mcp_auth entry 'other'"* ]]
-  [[ "$output" == *"no usable name"* ]]
-  [[ "$output" != *"return 200"* && "$output" != *"s3cret"* && "$output" != *"nonamesecret"* ]]
+  [[ "$output" == *"ignoring 4 extra_mcp_auth entry(ies) that name no extra_mcp entry"* ]]
+  [[ "$output" != *"return 200"* && "$output" != *"s3cret"* && "$output" != *"nonamesecret"* && "$output" != *"other"* && "$output" != *"mfrgg"* ]]
   [ ! -e "$HC_PROXY_DIR/extra-auth-other.conf" ]
+}
+
+@test "a token goes to the server of exactly that name, and each server gets its own" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run"
+  set_options '{"extra_mcp":["git=https://h/a","github=https://h/b","hub=https://h/c"],"extra_mcp_auth":["github=tok-github","hub=tok-hub","github=tok-second"]}'
+  run write_extra_auth
+  [[ "$output" == *"a second extra_mcp_auth entry for 'github'"* ]]
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-git.conf")" = 'proxy_set_header Authorization "";' ]
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-github.conf")" = 'proxy_set_header Authorization "Bearer tok-github";' ]
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-hub.conf")" = 'proxy_set_header Authorization "Bearer tok-hub";' ]
+}
+
+@test "a token over http is logged as unencrypted, by the server's name; an overlong token is not used" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run"
+  long="$(printf 'a%.0s' {1..2049})"
+  set_options "$(jq -cn --arg l "$long" '{extra_mcp: ["plain=http://h/a", "safe=https://h/b"], extra_mcp_auth: ["plain=tok-plain", ("safe=" + $l)]}')"
+  run write_extra_auth
+  [[ "$output" == *"the token for 'plain' is sent over http"* ]]
+  [[ "$output" == *"the token for 'safe' is not usable"* ]]
+  [[ "$output" != *"tok-plain"* ]]
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-safe.conf")" = 'proxy_set_header Authorization "";' ]
 }
 
 @test "the token of an extra entry is in no rendered configuration and the Supervisor's token is in no extra file" {

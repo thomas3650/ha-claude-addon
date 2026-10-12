@@ -194,7 +194,7 @@ docker rm -f "$name" >/dev/null
 # client's query string is dropped.
 docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all \
   -e HC_MCP_UPSTREAM=http://127.0.0.1:7690/core/api/mcp \
-  -e "HC_EXTRA_MCP=$(printf 'x=http://127.0.0.1:7691/private_s3cret\nz=http://127.0.0.1:7692/held')" \
+  -e "HC_EXTRA_MCP=$(printf 'x=http://127.0.0.1:7691/private_s3cret\nz=http://127.0.0.1:7692/held\ntls=https://example.invalid/x')" \
   -e HC_EXTRA_MCP_AUTH=z=extra-secret "$image" >/dev/null
 for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
@@ -241,6 +241,12 @@ done
 docker exec "$name" test -f /run/ha-claude/extra-auth-z.conf || fail "the extra server's token file is missing"
 docker exec -u claude "$name" cat /run/ha-claude/extra-auth-z.conf >/dev/null 2>&1 && fail "the Claude user can read an extra server's token"
 if grep -q "extra-secret\|smoke-secret" <<<"$(logs)"; then fail "a token reached the log"; fi
+
+# An https server: nginx started with its location, so the directives and
+# the certificate bundle are ones this nginx takes; a name that does not
+# resolve answers 502. The configuration itself is for root only.
+[[ "$(code -X POST http://127.0.0.1:7684/mcp/tls)" == 502 ]] || fail "the https extra address did not answer 502 for a name that does not resolve"
+docker exec -u claude "$name" cat /etc/nginx/nginx.conf >/dev/null 2>&1 && fail "the Claude user can read nginx's configuration"
 
 docker rm -f "$name" >/dev/null
 echo "container smoke test passed"
