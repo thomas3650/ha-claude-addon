@@ -261,8 +261,10 @@ listener`:
 
 When it works, a later line lists the names of the tools Home Assistant
 offers, as `proxy: Home Assistant offers these tools: ...`. A script you
-have exposed is offered as a tool under its own name, so that name is in
-the log too. In Claude Code a
+have exposed is offered as a tool named after it, so that name is in the
+log too. Since Home Assistant 2026.9 every tool carries the name of the
+integration that offers it in front, as `intent__HassTurnOn`, and a script
+is `script__<name>`. In Claude Code a
 tool is called `mcp__<server>__<name>`, with the server's name from
 `.mcp.json`; permission rules and an agent's tool list use that form. Each
 extra server is tried the same way and logged by its name:

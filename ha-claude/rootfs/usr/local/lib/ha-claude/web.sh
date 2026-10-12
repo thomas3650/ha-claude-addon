@@ -236,7 +236,8 @@ _tool_names() {
 # What the codes mean is in DOCS.md. When Home Assistant answers, the names
 # of the tools it offers are logged as well, since permission rules are
 # written by tool name. Nothing else of an answer is logged. A script that
-# is exposed is offered as a tool under its own name.
+# is exposed is offered as a tool named after it, as script__<name> since
+# Home Assistant 2026.9.
 check_proxy() {
   local code="" names=""
   code="$(_proxy_post ping http://127.0.0.1:7684/mcp '{}' -o /dev/null -w '%{http_code}')" || code=""
