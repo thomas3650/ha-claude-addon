@@ -5,7 +5,7 @@ parse_command() {
   local line="${1//$'\r'/}" word
   word="$(jq -r 'if type == "string" then . elif type == "object" then (.command // "") else "" end' \
             <<<"$line" 2>/dev/null)" || word=""
-  if [[ -z "$word" && "$line" =~ ^[a-z-]+(\ [0-9-]+)?$ ]]; then
+  if [[ -z "$word" && "$line" =~ ^[a-z-]+(\ [a-z0-9-]+)?$ ]]; then
     word="$line"
   fi
   printf '%s' "$word"
@@ -51,8 +51,9 @@ handle_command() {
   word="$(parse_command "$1")"
   name="${word%% *}"
   [[ "$word" == *" "* ]] && arg="${word#* }"
-  # Only report takes an argument; anything else with one is not a command.
-  if [[ -n "$arg" && "$name" != report ]]; then
+  # Only report and run take an argument; anything else with one is not a
+  # command, and run without one is not either.
+  if [[ -n "$arg" && "$name" != report && "$name" != run ]] || [[ -z "$arg" && "$name" == run ]]; then
     log "commands: ignoring unknown command"
     return 0
   fi
@@ -96,6 +97,17 @@ handle_command() {
       local outcome=failed
       run_report outcome "$arg"
       raise_outcome report "$outcome"
+      ;;
+    run)
+      # Waited for here, like the morning run. The chat session is left
+      # alone. The agent's name goes into the event only when it is a name.
+      local outcome=failed
+      run_agent outcome "$arg"
+      if run_name_ok "$arg"; then
+        raise_outcome run "$outcome" "$arg"
+      else
+        raise_outcome run "$outcome"
+      fi
       ;;
     "")
       [[ -n "${1//[[:space:]]/}" ]] && log "commands: ignoring malformed command"

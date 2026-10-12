@@ -1,7 +1,8 @@
 # The morning run: Claude Code once, without a terminal, as the agent
 # "morning-briefing" from the working folder, with a turn limit and a time
 # limit and with automatic memory off. The add-on does not read what the run
-# produces; it only checks that today's handover file was written.
+# produces; it only checks that today's handover file was written. The run is
+# marked as unattended in its environment, as the run command's agents are.
 : "${HC_CLAUDE_BIN:=claude}"
 : "${HC_LIMIT_BIN:=/usr/local/bin/ha-claude-limit}"
 HC_MORNING_AGENT=morning-briefing
@@ -41,6 +42,7 @@ run_morning() {
   rm -f "$HC_STATE/morning.log"
   ( umask 077; : > "$HC_STATE/morning.log" )
   ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
+      HA_CLAUDE_UNATTENDED="$HC_MORNING_AGENT" \
       "$HC_LIMIT_BIN" "$_rm_limit" "$HC_CLAUDE_BIN" \
       -p "Today is $_rm_today. Today's handover file is $_rm_file. Do your morning run." \
       --agent "$HC_MORNING_AGENT" --max-turns "$_rm_turns" --permission-mode default \
@@ -52,6 +54,11 @@ run_morning() {
     printf -v "$1" '%s' timeout
   elif (( _rm_rc == 0 )) && [[ -s "$_rm_file" && ! "$_rm_file" -ot "$_rm_marker" ]]; then
     printf -v "$1" '%s' ok
+    # The run may leave a short result beside its handover file. It is
+    # raised when it is there and good; the outcome does not depend on it.
+    if declare -F publish_result >/dev/null; then
+      publish_result "$HC_MORNING_AGENT" "$_rm_marker" || true
+    fi
   else
     printf -v "$1" '%s' failed
   fi

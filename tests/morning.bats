@@ -150,3 +150,41 @@ EOT
   [ ! -e "$HC_HANDOVER/CLAUDE.md" ]
 }
 
+
+@test "the morning run is marked as unattended" {
+  load_lib options env morning
+  stub_claude write
+  run_morning got
+  grep -qx "HA_CLAUDE_UNATTENDED=morning-briefing" "$STUB/env"
+}
+
+@test "an ok morning run raises its result when it left a good one, and is ok without one" {
+  load_lib options env morning result
+  stub_claude write
+  export SUPERVISOR_TOKEN=tok-123
+  curl() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"; cat > /dev/null; }
+  run_morning got
+  [ "$got" = "ok" ]
+  [ ! -e "$BATS_TEST_TMPDIR/curl-args" ]
+  mkdir -p "$HC_RESULTS"
+  cat > "$STUB/claude" <<EOT
+#!/usr/bin/env bash
+printf '# written\n' > "$TODAY_FILE"
+printf '{"count":1,"verdict":"v","text":"t"}' > "$HC_RESULTS/morning-briefing.json"
+EOT
+  run_morning got
+  [ "$got" = "ok" ]
+  grep -q "/events/ha_claude_result" "$BATS_TEST_TMPDIR/curl-args"
+}
+
+@test "a failed morning run raises no result" {
+  load_lib options env morning result
+  stub_claude error
+  export SUPERVISOR_TOKEN=tok-123
+  curl() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"; cat > /dev/null; }
+  mkdir -p "$HC_RESULTS"
+  printf '{"count":1,"verdict":"v","text":"t"}' > "$HC_RESULTS/morning-briefing.json"
+  run_morning got
+  [ "$got" = "failed" ]
+  [ ! -e "$BATS_TEST_TMPDIR/curl-args" ]
+}
