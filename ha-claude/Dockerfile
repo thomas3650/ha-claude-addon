@@ -1,6 +1,8 @@
-FROM node:22-bookworm-slim AS node
+# Both base images are named by digest, so the same Dockerfile builds the
+# same image on any day. The weekly workflow moves them, with Claude Code.
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS node
 
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 
 ARG BUILD_VERSION=dev
 ARG BUILD_ARCH=unknown

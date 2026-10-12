@@ -123,3 +123,28 @@ load helpers
   [ ! -e "$HC_HANDOVER/CLAUDE.md" ]
 }
 
+
+@test "a chat run shorter than thirty seconds counts towards giving up, and a longer one starts the count again" {
+  load_lib options session
+  [ "$(chat_quick_exits 0 3)" = 1 ]
+  [ "$(chat_quick_exits 1 29)" = 2 ]
+  [ "$(chat_quick_exits 2 0)" = 3 ]
+  [ "$(chat_quick_exits 2 30)" = 0 ]
+  [ "$(chat_quick_exits 2 4000)" = 0 ]
+  # Anything that is not a count or a time is taken as a quick exit from nothing.
+  [ "$(chat_quick_exits x y)" = 1 ]
+  [ "$(chat_quick_exits '' '')" = 1 ]
+}
+
+@test "the chat loop counts with that rule, leaves a shell after three quick exits, and waits before every other restart" {
+  chat="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-chat"
+  grep -q 'quick_exits="$(chat_quick_exits "$quick_exits" "$((SECONDS - started))")"' "$chat"
+  grep -q 'if (( quick_exits >= 3 )); then' "$chat"
+  # A count that is no number gives up at once, and nothing else changes it.
+  grep -q '\[\[ "$quick_exits" =~ ^\[0-9\]+$ \]\] || quick_exits=3' "$chat"
+  [ "$(grep -c 'quick_exits=' "$chat")" -eq 3 ]
+  give_up="$(grep -n 'quick_exits >= 3' "$chat" | cut -d: -f1)"
+  shell="$(grep -n 'exec bash -l' "$chat" | tail -n 1 | cut -d: -f1)"
+  wait="$(grep -n 'sleep 10' "$chat" | cut -d: -f1)"
+  [ "$give_up" -lt "$shell" ] && [ "$shell" -lt "$wait" ]
+}

@@ -202,13 +202,16 @@ render_nginx_conf() {
 }
 
 # Posts one MCP request through the listener. Arguments: the method, the
-# address, the JSON params, then curl options.
+# address, the JSON params, then curl options. A probe sends two requests
+# to one server, the first and then the one for the tools; each has its own
+# id, as the protocol asks of a session.
 _proxy_post() {
-  local method="$1" url="$2" params="$3"; shift 3
+  local method="$1" url="$2" params="$3" id=1; shift 3
+  [[ "$method" == tools/list ]] && id=2
   curl -s -m 15 -X POST \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":$id,\"method\":\"$method\",\"params\":$params}" \
     "$@" "$url" 2>/dev/null
 }
 
@@ -252,6 +255,7 @@ check_proxy() {
 # the session the server names, say that the client is initialized, then
 # ask for the tools. Logs the entry's name only, never its upstream. A
 # refused entry was already logged when the configuration was rendered.
+# The session is not closed afterwards; DOCS.md says why.
 check_extra_mcp() {
   local entry name url code headers session names
   local -a hdr
