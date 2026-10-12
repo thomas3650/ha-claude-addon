@@ -140,14 +140,14 @@ EOT
   [ ! -e "$SENT/args" ]
 }
 
-@test "a result from before the run that the run did not touch is failed" {
+@test "a result from before the run is removed before the run starts" {
   load_lib options env morning result run
   stub_claude nothing
   printf '{"count":0,"verdict":"old","text":"old"}' > "$RESULT"
-  touch -t 202001010000 "$RESULT"
   run_agent got house-check
   [ "$got" = "failed" ]
   [ ! -e "$SENT/args" ]
+  [ ! -e "$RESULT" ]
 }
 
 @test "a run that takes longer than the limit is timeout" {

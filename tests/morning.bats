@@ -177,6 +177,19 @@ EOT
   grep -q "/events/ha_claude_result" "$BATS_TEST_TMPDIR/curl-args"
 }
 
+@test "the morning run starts without yesterday's result file" {
+  load_lib options env morning result
+  stub_claude write
+  mkdir -p "$HC_RESULTS"
+  printf '{"count":1,"verdict":"old","text":"old"}' > "$HC_RESULTS/morning-briefing.json"
+  export SUPERVISOR_TOKEN=tok-123
+  curl() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"; cat > /dev/null; }
+  run_morning got
+  [ "$got" = "ok" ]
+  [ ! -e "$HC_RESULTS/morning-briefing.json" ]
+  [ ! -e "$BATS_TEST_TMPDIR/curl-args" ]
+}
+
 @test "a failed morning run raises no result" {
   load_lib options env morning result
   stub_claude error

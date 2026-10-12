@@ -33,6 +33,13 @@ _result_body() {
   ' "$2" 2>/dev/null
 }
 
+# clear_result <agent> - removes the agent's result file before a run, as
+# the Claude user, so a run starts without one: what is there afterwards is
+# this run's, and the agent writes a new file, not over an old one.
+clear_result() {
+  as_claude rm -f -- "$HC_RESULTS/$1.json" </dev/null >/dev/null 2>&1 || true
+}
+
 # publish_result <agent> <marker> - raises the agent's result file as the
 # event ha_claude_result. Returns 1, with one fixed reason in the log, when
 # the file is missing, older than the marker, cannot be read in time, is too

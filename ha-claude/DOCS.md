@@ -147,7 +147,8 @@ three fields.
 | `verdict` | One line of text | 120 characters |
 | `text` | Text; line feeds are kept | 4000 characters |
 
-After the run the add-on checks the file: not older than the start of the
+Before a run the add-on removes the agent's result file, so the agent
+writes a new one. After the run the add-on checks the file: not older than the start of the
 run, at most 32 KiB, one JSON value with these three fields and no others,
 of these types and within these limits, the count written as a plain whole
 number. Control characters are removed. The add-on's own process never opens

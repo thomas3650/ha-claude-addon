@@ -39,6 +39,7 @@ run_agent() {
   _ra_log="$HC_STATE/run-$_ra_agent.log"
   mkdir -p "$HC_STATE"
   declare -F clean_handover >/dev/null && clean_handover
+  clear_result "$_ra_agent"
   : > "$_ra_marker"
   rm -f "$_ra_log"
   ( umask 077; : > "$_ra_log" )
