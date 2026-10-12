@@ -30,14 +30,17 @@ prune_handover() {
 # case. The removal is done as the Claude user, who owns the folder: done as
 # root, a folder swapped for a link at the right moment could point the
 # removal at a file outside it.
+# The results folder is cleaned the same way: it is the Claude user's too.
 clean_handover() {
   local removed=0
-  local -a runner=()
-  [[ -d "$HC_HANDOVER" ]] || return 0
+  local -a runner=() dirs=()
+  [[ -d "$HC_HANDOVER" ]] && dirs+=("$HC_HANDOVER")
+  [[ -d "${HC_RESULTS:-}" ]] && dirs+=("$HC_RESULTS")
+  (( ${#dirs[@]} )) || return 0
   if [[ "$(id -u)" == 0 ]] && declare -F as_claude >/dev/null; then
     runner=(as_claude)
   fi
-  removed="$("${runner[@]}" find "$HC_HANDOVER" -mindepth 1 \( -iname CLAUDE.md -o -iname CLAUDE.local.md \
+  removed="$("${runner[@]}" find "${dirs[@]}" -mindepth 1 \( -iname CLAUDE.md -o -iname CLAUDE.local.md \
                -o -iname .claude -o -iname .mcp.json \) -prune -print -exec rm -rf {} + 2>/dev/null | wc -l)"
   removed="${removed//[[:space:]]/}"
   if (( ${removed:-0} )); then

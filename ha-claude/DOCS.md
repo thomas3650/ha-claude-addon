@@ -38,6 +38,8 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `extra_mcp` | More MCP servers for Claude, one `name=upstream` per entry, for example `tools=http://my-mcp:8000/path`. A name is lowercase letters, digits and `-`; an upstream is `http` or `https` with no query string, and its path is sent as it is (an upstream without a path receives `/mcp/<name>`). The upstream's own secret path, if it has one, is its credential and stays in this option; the add-on keeps the upstream's address out of its log. Read when the add-on starts. See "Home Assistant for Claude". |
 | `morning_timeout` | The longest a morning run may take, in seconds. |
 | `morning_max_turns` | The most steps Claude may take in a morning run |
+| `run_timeout` | The longest a run started with the `run` command may take, in seconds |
+| `run_max_turns` | The most steps Claude may take in such a run |
 
 The add-on comes with GitHub's SSH host keys, so a server that answers for
 `github.com` with another key is refused. The key of any other host is
@@ -53,6 +55,7 @@ Send one of these with Home Assistant's add-on stdin action:
 | `sync` | Fetches the repo again and starts a new chat session |
 | `restart-chat` | Starts a new chat session |
 | `morning` | Runs the morning briefing, then starts a new chat session. See below |
+| `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
 
 Every command raises the event `ha_claude_outcome` with `command` and
@@ -61,7 +64,8 @@ when no chat session could be started. For `sync` it is `ok` when the
 working folder was renewed or no repo is configured, `kept` when the
 working folder could not be renewed and the previous one stays in use, and
 `failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say
-why. For `report`, see below.
+why. For `report`, see below. For `run` the event also carries `agent`,
+the name that was asked for, when it is a name the command accepts.
 
 ## The morning run
 
@@ -96,6 +100,70 @@ took. What Claude printed is kept in `/data/state/morning.log`, because it
 can hold what Claude read: only root can read it, which means from the host
 and not from the panel, and it is left out of backups. The run keeps no
 transcript.
+
+## Running an agent
+
+On the command `run <agent>` the add-on runs Claude Code once, without a
+terminal, as the agent of that name from the working folder
+(`.claude/agents/<agent>.md`), the way it runs the morning briefing: with
+automatic memory off, with no transcript kept, and with the time limit
+`run_timeout` and the turn limit `run_max_turns`. The chat session is not
+ended or restarted.
+
+A name is a lowercase letter followed by at most 31 lowercase letters,
+digits or `-`. The two agents the add-on starts itself, `chat` and
+`morning-briefing`, are refused: the chat's agent has the tools of a session
+somebody is watching.
+
+The run is told today's date and the path of its result file, and nothing
+else. Its environment holds `HA_CLAUDE_UNATTENDED` with the agent's name, as
+the morning run's does, so a hook in the working folder can tell a run
+nobody is watching from the chat session. The chat session never has that
+variable.
+
+As in a morning run, nothing can be asked: a tool that the working folder's
+settings do not allow is refused.
+
+| Outcome | Meaning |
+|---|---|
+| `ok` | The run ended without an error and left a good result file |
+| `failed` | The run ended with an error, or its result file is missing, older than the run or not a result. The log gives the reason as one word |
+| `timeout` | The run took longer than `run_timeout` and was stopped |
+| `not_configured` | The name is not one the command accepts, or the working folder has no such agent; nothing was run |
+
+While a run is in progress the add-on handles no other command. What Claude
+printed is kept in `/data/state/run-<agent>.log`, which only root can read
+and which is left out of backups.
+
+## The result file
+
+An agent that runs without a terminal may leave a short result for Home
+Assistant in `/data/results/<agent>.json`: one JSON object with exactly
+three fields.
+
+| Field | Holds | Limit |
+|---|---|---|
+| `count` | A whole number | 0 to 9999 |
+| `verdict` | One line of text | 120 characters |
+| `text` | Text; line feeds are kept | 4000 characters |
+
+After the run the add-on checks the file: a regular file and not a link,
+written during this run, at most 32 KiB, these three fields and no others,
+of these types and within these limits. Control characters are removed. A
+good result is raised as the event `ha_claude_result` with `agent`, `count`,
+`verdict`, `text` and `time`. A file that fails a check is not raised, and
+its content is never written to the log.
+
+This is the only way text Claude wrote leaves the add-on. What an agent
+puts there is readable in Home Assistant by whatever listens for the event,
+so tell the agent what may go in it. To turn the event into a sensor, use a
+trigger-based template sensor on the event; to keep the text out of Home
+Assistant's database, exclude the event type and that sensor from the
+recorder.
+
+A run started with `run` must leave a result to be `ok`. The morning run may
+leave one as `morning-briefing.json`; it is raised when the run is `ok` and
+the file is good, and the run's outcome does not depend on it.
 
 ## The report
 
@@ -223,11 +291,13 @@ command. Managed settings rank above every other settings file, and Claude
 cannot change them. A file that is not one JSON object, or that is a link, is not
 installed; the last good one stays, and the log says so.
 
-The handover folder, `/data/handover`, is the one place outside its home
-where Claude can write. Files named `YYYY-MM-DD.md` there are deleted once
+Outside its home Claude can write in two folders: the handover folder,
+`/data/handover`, and the results folder, `/data/results` (see "The result
+file"). Whether Claude Code lets it is for the working folder's settings to
+say. Files named `YYYY-MM-DD.md` in the handover folder are deleted once
 their date is more than 30 days ago. Files that Claude Code could read as
 instructions or settings (`CLAUDE.md`, `CLAUDE.local.md`, `.claude`,
-`.mcp.json`, in any case and at any depth) are removed from that folder
-each time Claude Code is started, for the chat session or for a morning
-run. When a session or a run starts, the log says so.
+`.mcp.json`, in any case and at any depth) are removed from both folders
+each time Claude Code is started, for the chat session, for a morning run
+or for a run started with `run`. When a session or a run starts, the log says so.
 Nothing else in that folder is touched.

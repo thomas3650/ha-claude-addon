@@ -84,3 +84,12 @@ retention_setup() {
   [ -z "$output" ]
 }
 
+@test "the results folder is cleaned of what reads as instructions too" {
+  load_lib retention
+  mkdir -p "$HC_HANDOVER" "$HC_RESULTS/.claude"
+  touch "$HC_RESULTS/CLAUDE.md" "$HC_RESULTS/.claude/settings.json" "$HC_RESULTS/house-check.json"
+  run clean_handover
+  [[ "$output" == *"removed 2"* ]]
+  [ "$(ls -A "$HC_RESULTS")" = "house-check.json" ]
+}
+

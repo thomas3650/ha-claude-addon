@@ -38,6 +38,7 @@ run_agent() {
   _ra_turns="$(_morning_number '.run_max_turns' 60)"
   _ra_log="$HC_STATE/run-$_ra_agent.log"
   mkdir -p "$HC_STATE"
+  declare -F clean_handover >/dev/null && clean_handover
   : > "$_ra_marker"
   rm -f "$_ra_log"
   ( umask 077; : > "$_ra_log" )
