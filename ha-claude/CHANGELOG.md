@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/thomas3650/ha-claude-addon/compare/v0.12.1...v0.12.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* Claude Code 2.1.296 ([#34](https://github.com/thomas3650/ha-claude-addon/issues/34)) ([df1e289](https://github.com/thomas3650/ha-claude-addon/commit/df1e289a9b1800d1bcb190ae1ee19d933252ca8c))
+
 ## [0.12.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.12.0...v0.12.1) (2026-10-12)
 
 
