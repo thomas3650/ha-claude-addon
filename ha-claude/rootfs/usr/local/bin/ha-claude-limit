@@ -33,6 +33,8 @@ stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
 ) &
 watchdog=$!
 wait "$pid"; status=$?
+# What the command started and left running is stopped with it.
+kill -KILL -- "-$pid" 2>/dev/null
 if wait "$watchdog"; then
   exit "$status"
 fi

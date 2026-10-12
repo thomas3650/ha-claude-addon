@@ -48,3 +48,12 @@ LIMIT="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   [ "$status" -eq 5 ]
 }
 
+@test "what a command started and left running is stopped when the command ends by itself" {
+  command -v setsid >/dev/null || skip "needs setsid; runs in the container test and in CI"
+  mark="$BATS_TEST_TMPDIR/left"
+  run "$LIMIT" 10 bash -c "( sleep 3; touch '$mark' ) & exit 0"
+  [ "$status" -eq 0 ]
+  sleep 4
+  [ ! -e "$mark" ]
+}
+

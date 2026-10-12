@@ -307,6 +307,13 @@ stub_run() {
   [ "$(parse_command '"run house-check"')" = "run house-check" ]
 }
 
+@test "a plain line with a word after a command that takes a month or nothing is still malformed" {
+  load_lib commands
+  [ -z "$(parse_command 'report abc')" ]
+  [ -z "$(parse_command 'sync now')" ]
+  [ "$(parse_command 'report 2026-09')" = "report 2026-09" ]
+}
+
 @test "a stop signal during a run ends the main process at once" {
   STUB="$BATS_TEST_TMPDIR/stub"
   mkdir -p "$STUB" "$HC_DATA/workspace/assistant/.claude/agents"

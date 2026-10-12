@@ -56,7 +56,7 @@ run_morning() {
     printf -v "$1" '%s' ok
     # The run may leave a short result beside its handover file. It is
     # raised when it is there and good; the outcome does not depend on it.
-    if declare -F publish_result >/dev/null; then
+    if declare -F publish_result >/dev/null && [[ -e "$HC_RESULTS/$HC_MORNING_AGENT.json" ]]; then
       publish_result "$HC_MORNING_AGENT" "$_rm_marker" || true
     fi
   else

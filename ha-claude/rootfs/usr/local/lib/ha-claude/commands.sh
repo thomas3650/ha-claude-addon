@@ -5,7 +5,7 @@ parse_command() {
   local line="${1//$'\r'/}" word
   word="$(jq -r 'if type == "string" then . elif type == "object" then (.command // "") else "" end' \
             <<<"$line" 2>/dev/null)" || word=""
-  if [[ -z "$word" && "$line" =~ ^[a-z-]+(\ [a-z0-9-]+)?$ ]]; then
+  if [[ -z "$word" && "$line" =~ ^([a-z-]+(\ [0-9-]+)?|run\ [a-z][a-z0-9-]*)$ ]]; then
     word="$line"
   fi
   printf '%s' "$word"

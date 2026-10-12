@@ -24,6 +24,7 @@ backup_exclude:
   - repo/**
   - state/morning.log
   - state/run-*.log
+  - state/result.*
   - state/report.out
 options:
   session_name: Home

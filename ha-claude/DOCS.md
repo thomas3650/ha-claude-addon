@@ -127,7 +127,7 @@ settings do not allow is refused.
 | Outcome | Meaning |
 |---|---|
 | `ok` | The run ended without an error and left a good result file |
-| `failed` | The run ended with an error, or its result file is missing, older than the run or not a result. The log gives the reason as one word |
+| `failed` | The run ended with an error, or its result file is missing, older than the run or not a result. The log gives the reason in a word or two |
 | `timeout` | The run took longer than `run_timeout` and was stopped |
 | `not_configured` | The name is not one the command accepts, or the working folder has no such agent; nothing was run |
 
@@ -147,14 +147,18 @@ three fields.
 | `verdict` | One line of text | 120 characters |
 | `text` | Text; line feeds are kept | 4000 characters |
 
-After the run the add-on checks the file: a regular file and not a link,
-written during this run, at most 32 KiB, these three fields and no others,
-of these types and within these limits. Control characters are removed. A
-good result is raised as the event `ha_claude_result` with `agent`, `count`,
+After the run the add-on checks the file: not older than the start of the
+run, at most 32 KiB, one JSON value with these three fields and no others,
+of these types and within these limits, the count written as a plain whole
+number. Control characters are removed. The add-on's own process never opens
+the file where it lies: the Claude user copies it, within a few seconds and
+up to the size limit, to a place only root reaches, and the copy is what is
+checked. A good result is raised as the event `ha_claude_result` with `agent`, `count`,
 `verdict`, `text` and `time`. A file that fails a check is not raised, and
 its content is never written to the log.
 
-This is the only way text Claude wrote leaves the add-on. What an agent
+This is the only way text Claude wrote leaves through the add-on's own
+code. What an agent
 puts there is readable in Home Assistant by whatever listens for the event,
 so tell the agent what may go in it. To turn the event into a sensor, use a
 trigger-based template sensor on the event; to keep the text out of Home
@@ -300,4 +304,4 @@ instructions or settings (`CLAUDE.md`, `CLAUDE.local.md`, `.claude`,
 `.mcp.json`, in any case and at any depth) are removed from both folders
 each time Claude Code is started, for the chat session, for a morning run
 or for a run started with `run`. When a session or a run starts, the log says so.
-Nothing else in that folder is touched.
+Nothing else in those folders is touched.
