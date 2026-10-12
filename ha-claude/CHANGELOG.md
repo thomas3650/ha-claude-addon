@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.12.0...v0.12.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* the probe's requests have their own ids; the base images and the actions are pinned ([#36](https://github.com/thomas3650/ha-claude-addon/issues/36)) ([33f5800](https://github.com/thomas3650/ha-claude-addon/commit/33f58009c7ff35595116e27952609a983a60f3f3))
+
 ## [0.12.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.11.0...v0.12.0) (2026-10-12)
 
 
