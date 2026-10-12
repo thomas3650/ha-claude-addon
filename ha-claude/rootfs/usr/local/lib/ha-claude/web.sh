@@ -6,6 +6,7 @@
 HC_MCP_DEFAULT=http://supervisor/core/api/mcp
 : "${HC_MCP_UPSTREAM:=$HC_MCP_DEFAULT}"
 : "${HC_RESOLV:=/etc/resolv.conf}"
+: "${HC_CA_BUNDLE:=/etc/ssl/certs/ca-certificates.crt}"
 
 # Prints the name server nginx asks for the upstream's address.
 proxy_resolver() {
@@ -46,8 +47,78 @@ extra_mcp_entries() {
            elif [[ -f "$HC_OPTIONS" ]]; then jq -r '.extra_mcp[]? | strings' "$HC_OPTIONS" 2>/dev/null; fi)
 }
 
-# Prints one nginx location per extra_mcp entry: POST only, no token, the
-# upstream's errors kept out of the log, a longer read timeout than /mcp.
+# Prints the entries of the option extra_mcp_auth, one name=token per line.
+# HC_EXTRA_MCP_AUTH, newline-separated, replaces the option for the tests.
+_extra_mcp_auth_entries() {
+  if [[ -n "${HC_EXTRA_MCP_AUTH:-}" ]]; then
+    printf '%s\n' "$HC_EXTRA_MCP_AUTH"
+  elif [[ -f "$HC_OPTIONS" ]]; then
+    jq -r '.extra_mcp_auth[]? | strings' "$HC_OPTIONS" 2>/dev/null
+  fi
+}
+
+# Prints the token extra_mcp_auth holds for one extra_mcp name, or nothing.
+# Only a token made of characters that cannot end nginx's string is used.
+# Nothing of an entry is ever logged but a name that is a name.
+extra_mcp_token() {
+  local want="$1" entry
+  while IFS= read -r entry; do
+    [[ "$entry" == "$want="* ]] || continue
+    entry="${entry#*=}"
+    if [[ "$entry" =~ ^[A-Za-z0-9._~+/=-]+$ ]]; then
+      printf '%s' "$entry"
+    else
+      log "proxy: the token for '$want' is not usable; none is sent"
+    fi
+    return 0
+  done < <(_extra_mcp_auth_entries)
+}
+
+# Writes, for every extra_mcp entry, the file its location includes: the
+# Authorization header with the entry's token from extra_mcp_auth, or the
+# empty header when it has none. Every entry gets a file, because nginx does
+# not start without an included file, and with it goes the panel. The files
+# are for root only and made new each time, like the Supervisor token's. A
+# token for a name that is no extra_mcp entry is logged by that name.
+write_extra_auth() {
+  local entry name token line known=" " file
+  if ! { mkdir -p "$HC_PROXY_DIR" && chmod 700 "$HC_PROXY_DIR"; }; then
+    log "proxy: the folder for the token files could not be made; nginx will not start"
+    return 1
+  fi
+  rm -f "$HC_PROXY_DIR"/extra-auth-*.conf
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name="${entry%%=*}"
+    known+="$name "
+    token="$(extra_mcp_token "$name")"
+    line='proxy_set_header Authorization "";'
+    [[ -n "$token" ]] && line="proxy_set_header Authorization \"Bearer $token\";"
+    file="$HC_PROXY_DIR/extra-auth-$name.conf"
+    if ! ( umask 077; printf '%s\n' "$line" > "$file" ); then
+      log "proxy: the token file for '$name' could not be written; nginx will not start"
+      return 1
+    fi
+  done < <(extra_mcp_entries quiet)
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    name="${entry%%=*}"
+    if [[ "$entry" != *=* || ! "$name" =~ ^[a-z][a-z0-9-]{0,31}$ ]]; then
+      log "proxy: ignoring an extra_mcp_auth entry with no usable name"
+    elif [[ "$known" != *" $name "* ]]; then
+      log "proxy: ignoring extra_mcp_auth entry '$name': no extra_mcp entry has that name"
+    fi
+  done < <(_extra_mcp_auth_entries)
+  return 0
+}
+
+# Prints one nginx location per extra_mcp entry: POST only, the upstream's
+# errors kept out of the log, a longer read timeout than /mcp. The
+# Authorization header comes from the entry's included file (see
+# write_extra_auth): the Supervisor's token is never sent. An https
+# upstream is sent its own name and its certificate is checked against the
+# system's authorities; without that, anything that answered would be taken
+# for it.
 render_extra_mcp() {
   local entry name upstream var
   while IFS= read -r entry; do
@@ -63,7 +134,13 @@ render_extra_mcp() {
     printf '      proxy_pass $%s;\n' "$var"
     printf '      proxy_http_version 1.1;\n'
     printf '      proxy_set_header Connection "";\n'
-    printf '      proxy_set_header Authorization "";\n'
+    printf '      include %s/extra-auth-%s.conf;\n' "$HC_PROXY_DIR" "$name"
+    if [[ "$upstream" == https://* ]]; then
+      printf '      proxy_ssl_server_name on;\n'
+      printf '      proxy_ssl_verify on;\n'
+      printf '      proxy_ssl_verify_depth 4;\n'
+      printf '      proxy_ssl_trusted_certificate %s;\n' "$HC_CA_BUNDLE"
+    fi
     printf '      proxy_buffering off;\n'
     printf '      proxy_read_timeout 300s;\n'
     printf '    }\n'

@@ -194,7 +194,8 @@ docker rm -f "$name" >/dev/null
 # client's query string is dropped.
 docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all \
   -e HC_MCP_UPSTREAM=http://127.0.0.1:7690/core/api/mcp \
-  -e HC_EXTRA_MCP=x=http://127.0.0.1:7691/private_s3cret "$image" >/dev/null
+  -e "HC_EXTRA_MCP=$(printf 'x=http://127.0.0.1:7691/private_s3cret\nz=http://127.0.0.1:7692/held')" \
+  -e HC_EXTRA_MCP_AUTH=z=extra-secret "$image" >/dev/null
 for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
   sleep 1
@@ -225,6 +226,21 @@ for _ in $(seq 1 10); do
 done
 [[ "$sent" == "POST /private_s3cret none" ]] || fail "the listener sent on to the extra server '$sent'"
 grep -q "proxy: x answered" <<<"$(logs)" || fail "the extra server was not probed at start"
+
+# An extra MCP server with a token of its own: the listener sends that
+# token and no other, whatever the client sent; the Claude user cannot read
+# the file that holds it, and it is in no log line.
+docker exec -d "$name" node -e 'require("http").createServer((q, s) => s.end(q.method + " " + q.url + " " + (q.headers.authorization || "none"))).listen(7692, "127.0.0.1")' || fail "the second extra stand-in did not start"
+sent=""
+for _ in $(seq 1 10); do
+  sent="$(docker exec -u claude "$name" curl -s -m 10 -X POST -H 'Authorization: Bearer other' -d '{}' 'http://127.0.0.1:7684/mcp/z')" || true
+  [[ "$sent" == POST* ]] && break
+  sleep 1
+done
+[[ "$sent" == "POST /held Bearer extra-secret" ]] || fail "the listener sent on to the server with a token '$sent'"
+docker exec "$name" test -f /run/ha-claude/extra-auth-z.conf || fail "the extra server's token file is missing"
+docker exec -u claude "$name" cat /run/ha-claude/extra-auth-z.conf >/dev/null 2>&1 && fail "the Claude user can read an extra server's token"
+if grep -q "extra-secret\|smoke-secret" <<<"$(logs)"; then fail "a token reached the log"; fi
 
 docker rm -f "$name" >/dev/null
 echo "container smoke test passed"

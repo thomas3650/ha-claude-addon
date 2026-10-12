@@ -199,13 +199,72 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
   grep -q 'if ($request_method != POST) { return 405; }' <<<"$block"
   grep -q 'set $mcp_upstream_tools "http://my-mcp:8000/private_x1";' <<<"$block"
   grep -q 'proxy_pass $mcp_upstream_tools;' <<<"$block"
-  grep -q 'proxy_set_header Authorization "";' <<<"$block"
+  grep -q "include $HC_PROXY_DIR/extra-auth-tools.conf;" <<<"$block"
+  run grep -i 'bearer\|proxy_set_header Authorization\|proxy-auth.conf' <<<"$block"
+  [ "$status" -eq 1 ]
   grep -q 'error_log stderr crit;' <<<"$block"
   grep -q 'proxy_read_timeout 300s;' <<<"$block"
   grep -q 'proxy_buffering off;' <<<"$block"
-  run grep -q 'include ' <<<"$block"
-  [ "$status" -eq 1 ]
   [ "$(grep -c 'location ' <<<"$out")" -eq 8 ]
+}
+
+@test "an https upstream is sent its name and its certificate is checked; an http one has neither line" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none"
+  set_options '{"extra_mcp":["plain=http://my-mcp:8000/x","safe=https://api.example.com/mcp/x"]}'
+  out="$(render_nginx_conf "$CONF")"
+  safe="$(sed -n '/location = \/mcp\/safe {/,/^    }/p' <<<"$out")"
+  grep -q 'proxy_ssl_server_name on;' <<<"$safe"
+  grep -q 'proxy_ssl_verify on;' <<<"$safe"
+  grep -q 'proxy_ssl_verify_depth 4;' <<<"$safe"
+  grep -q 'proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;' <<<"$safe"
+  plain="$(sed -n '/location = \/mcp\/plain {/,/^    }/p' <<<"$out")"
+  run grep 'proxy_ssl' <<<"$plain"
+  [ "$status" -eq 1 ]
+}
+
+@test "every extra entry gets a root-only header file: its token from extra_mcp_auth, or the empty header" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run"
+  set_options '{"extra_mcp":["tools=http://h/a","safe=https://h/b"],"extra_mcp_auth":["safe=tok_123.abc-DEF"]}'
+  mkdir -p "$HC_PROXY_DIR"; echo stale > "$HC_PROXY_DIR/extra-auth-gone.conf"
+  write_extra_auth
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-safe.conf")" = 'proxy_set_header Authorization "Bearer tok_123.abc-DEF";' ]
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-tools.conf")" = 'proxy_set_header Authorization "";' ]
+  [ ! -e "$HC_PROXY_DIR/extra-auth-gone.conf" ]
+  mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
+  [ "$(mode "$HC_PROXY_DIR/extra-auth-safe.conf")" = "600" ]
+  [ "$(mode "$HC_PROXY_DIR")" = "700" ]
+  # Every location's include exists.
+  out="$(render_nginx_conf "$CONF")"
+  while IFS= read -r f; do [ -f "$f" ]; done < <(sed -n 's/^ *include \(.*extra-auth-.*\);$/\1/p' <<<"$out")
+  [ "$(grep -c 'extra-auth-' <<<"$out")" -eq 2 ]
+}
+
+@test "a token that could end the string is not used and never logged; a token for no entry is logged by its name" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run"
+  set_options "$(jq -cn '{extra_mcp: ["safe=https://h/b"], extra_mcp_auth: ["safe=x\"; return 200; #", "other=s3cret", "nonamesecret", "BAD NAME=s3cret2"]}')"
+  run write_extra_auth
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_PROXY_DIR/extra-auth-safe.conf")" = 'proxy_set_header Authorization "";' ]
+  [[ "$output" == *"the token for 'safe' is not usable"* ]]
+  [[ "$output" == *"ignoring extra_mcp_auth entry 'other'"* ]]
+  [[ "$output" == *"no usable name"* ]]
+  [[ "$output" != *"return 200"* && "$output" != *"s3cret"* && "$output" != *"nonamesecret"* ]]
+  [ ! -e "$HC_PROXY_DIR/extra-auth-other.conf" ]
+}
+
+@test "the token of an extra entry is in no rendered configuration and the Supervisor's token is in no extra file" {
+  load_lib options web
+  export HC_PROXY_DIR="$BATS_TEST_TMPDIR/run" HC_RESOLV="$BATS_TEST_TMPDIR/none" SUPERVISOR_TOKEN=sup-tok
+  set_options '{"extra_mcp":["safe=https://h/b"],"extra_mcp_auth":["safe=ext-tok"]}'
+  write_proxy_auth; write_extra_auth
+  out="$(render_nginx_conf "$CONF")"
+  run grep 'ext-tok\|sup-tok' <<<"$out"
+  [ "$status" -eq 1 ]
+  run grep 'sup-tok' "$HC_PROXY_DIR/extra-auth-safe.conf"
+  [ "$status" -eq 1 ]
 }
 
 @test "without extra_mcp the marker is replaced by nothing" {
