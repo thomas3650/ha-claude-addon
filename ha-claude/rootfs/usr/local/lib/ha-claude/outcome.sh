@@ -1,12 +1,14 @@
 # Reports the result of a command to Home Assistant as one fixed event
-# Run by the add-on's own script as root, never by Claude.
+# Run by the add-on's own script as root, never by Claude. A third argument
+# is the agent a run command named; it is sent as the field agent.
 raise_outcome() {
-  local command="$1" outcome="$2" body
+  local command="$1" outcome="$2" agent="${3:-}" body
   if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
-    log "outcome: $command=$outcome (not reported: no Supervisor token)"
+    log "outcome: $command=$outcome${agent:+ $agent} (not reported: no Supervisor token)"
     return 0
   fi
-  body="$(jq -cn --arg c "$command" --arg o "$outcome" '{command:$c,outcome:$o}')"
+  body="$(jq -cn --arg c "$command" --arg o "$outcome" --arg a "$agent" \
+            '{command:$c,outcome:$o} + (if $a != "" then {agent:$a} else {} end)')"
   # The token goes to curl on standard input, not as an argument: arguments
   # are readable by every user in the container.
   if curl -fsS -m 10 -o /dev/null -X POST \

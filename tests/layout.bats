@@ -5,6 +5,7 @@ load helpers
   ensure_layout
   [ -d "$HC_HOME" ] && [ -d "$HC_HANDOVER" ] && [ -d "$HC_STATE" ] && [ -d "$HC_WORKSPACE" ]
   [ -d "$HC_STATUS" ]
+  [ -d "$HC_RESULTS" ]
 }
 
 @test "as root, the workspace is not writable by the Claude user" {
@@ -14,6 +15,7 @@ load helpers
   ensure_layout
   [ "$(stat -c %U "$HC_WORKSPACE")" = "root" ]
   [ "$(stat -c %U "$HC_HANDOVER")" = "claude" ]
+  [ "$(stat -c %U "$HC_RESULTS")" = "claude" ]
   [ "$(stat -c %a "$HC_STATE")" = "700" ]
   [ "$(stat -c %U:%a "$HC_STATUS")" = "root:755" ]
   run runuser -u claude -- touch "$HC_WORKSPACE/x"

@@ -259,3 +259,89 @@ EOT
   [ "$status" -eq 1 ]
 }
 
+
+stub_run() {
+  raise_outcome() { echo "outcome $*" >> "$CALLS"; }
+  RUN_OUTCOME=ok
+  run_agent() { echo "agent $2" >> "$CALLS"; printf -v "$1" '%s' "$RUN_OUTCOME"; }
+}
+
+@test "run starts the named agent, leaves the chat alone and reports the outcome with the agent" {
+  load_lib morning run commands; stub_actions; stub_run
+  handle_command '"run house-check"'
+  [ "$(cat "$CALLS")" = $'agent house-check\noutcome run ok house-check' ]
+  : > "$CALLS"
+  RUN_OUTCOME=timeout
+  handle_command 'run house-check'
+  [ "$(cat "$CALLS")" = $'agent house-check\noutcome run timeout house-check' ]
+  run grep restart "$CALLS"
+  [ "$status" -eq 1 ]
+}
+
+@test "run without a name is unknown" {
+  load_lib morning run commands; stub_actions; stub_run
+  run handle_command '"run"'
+  [[ "$output" == *"ignoring unknown command"* ]]
+  run handle_command 'run'
+  [[ "$output" == *"ignoring unknown command"* ]]
+  [ ! -s "$CALLS" ]
+}
+
+@test "run with a name that is not an agent name starts nothing and does not echo the name" {
+  load_lib options env morning result run commands; stub_actions
+  raise_outcome() { echo "outcome $*" >> "$CALLS"; }
+  mkdir -p "$HC_WORKSPACE/.claude/agents"
+  touch "$HC_WORKSPACE/.claude/agents/chat.md"
+  HC_CLAUDE_BIN="$BATS_TEST_TMPDIR/never"
+  long="$(printf 'a%.0s' {1..33})"
+  for line in '"run a b"' '"run chat"' '"run morning-briefing"' "\"run $long\"" '"run ../x"' '"run Abc"'; do
+    : > "$CALLS"
+    handle_command "$line"
+    [ "$(cat "$CALLS")" = "outcome run not_configured" ]
+  done
+}
+
+@test "parse_command reads a plain run with a name" {
+  load_lib commands
+  [ "$(parse_command 'run house-check')" = "run house-check" ]
+  [ "$(parse_command '"run house-check"')" = "run house-check" ]
+}
+
+@test "a plain line with a word after a command that takes a month or nothing is still malformed" {
+  load_lib commands
+  [ -z "$(parse_command 'report abc')" ]
+  [ -z "$(parse_command 'sync now')" ]
+  [ "$(parse_command 'report 2026-09')" = "report 2026-09" ]
+}
+
+@test "a stop signal during a run ends the main process at once" {
+  STUB="$BATS_TEST_TMPDIR/stub"
+  mkdir -p "$STUB" "$HC_DATA/workspace/assistant/.claude/agents"
+  touch "$HC_DATA/workspace/assistant/.claude/agents/house-check.md"
+  printf '#!/usr/bin/env bash\nsleep 30 &\ntrap "kill $!" TERM\nwait\n' > "$STUB/claude"
+  chmod +x "$STUB/claude"
+  cat > "$BATS_TEST_TMPDIR/main" <<EOT
+for f in paths log options env morning result run commands; do . "$LIB/\$f.sh"; done
+raise_outcome() { :; }
+restart_chat() { :; }
+trap 'echo stopped; exit 0' TERM
+handle_command 'run house-check'
+echo finished
+EOT
+  HC_CLAUDE_BIN="$STUB/claude" \
+  HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" \
+    bash "$BATS_TEST_TMPDIR/main" > "$BATS_TEST_TMPDIR/out" 2>&1 3>&- &
+  pid=$!
+  sleep 2
+  kill -TERM "$pid"
+  for _ in 1 2 3 4 5; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  pkill -f "$STUB/claude" 2>/dev/null || true
+  run kill -0 "$pid"
+  [ "$status" -ne 0 ]
+  grep -qx "stopped" "$BATS_TEST_TMPDIR/out"
+  run grep "finished" "$BATS_TEST_TMPDIR/out"
+  [ "$status" -eq 1 ]
+}

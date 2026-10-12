@@ -1,13 +1,17 @@
 # Folders under /data and who owns them:
 #   workspace  root, read-only for the Claude user
 #   handover   Claude user
+#   results    Claude user
 #   home       Claude user
 #   status     root, readable by the Claude user
 #   state, repo, options file   root only
 ensure_layout() {
-  mkdir -p "$HC_HOME" "$HC_HANDOVER" "$HC_STATE" "$HC_STATUS" "$HC_WORKSPACE"
+  mkdir -p "$HC_HOME" "$HC_HANDOVER" "$HC_RESULTS" "$HC_STATE" "$HC_STATUS" "$HC_WORKSPACE"
   [[ "$(id -u)" == 0 ]] || return 0
   chown -R "$HC_USER:$HC_USER" "$HC_HOME" "$HC_HANDOVER"
+  # The folder only: what is in it is the Claude user's already, and a
+  # recursive change would follow whatever that user put there.
+  chown "$HC_USER:$HC_USER" "$HC_RESULTS"
   chown -R root:root "$(dirname "$HC_WORKSPACE")" "$HC_STATE" "$HC_STATUS"
   chmod -R u=rwX,go=rX "$(dirname "$HC_WORKSPACE")" "$HC_STATUS"
   chmod 700 "$HC_STATE"

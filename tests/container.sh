@@ -77,6 +77,7 @@ docker exec "$name" pgrep -u claude tmux >/dev/null || fail "tmux is not running
 docker exec "$name" runuser -u claude -- touch /data/workspace/assistant/x 2>/dev/null && fail "workspace is writable by claude"
 docker exec "$name" runuser -u claude -- ls /data/state >/dev/null 2>&1 && fail "state is readable by claude"
 docker exec "$name" runuser -u claude -- touch /data/handover/ok || fail "handover is not writable by claude"
+docker exec "$name" runuser -u claude -- touch /data/results/ok || fail "results is not writable by claude"
 
 # A session started from the web terminal is logged in the add-on's log.
 # Without a terminal the attach itself fails; the start before it is the test.

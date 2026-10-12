@@ -5,6 +5,7 @@
 : "${HC_REPO:=$HC_DATA/repo}"
 : "${HC_WORKSPACE:=$HC_DATA/workspace/assistant}"
 : "${HC_HANDOVER:=$HC_DATA/handover}"
+: "${HC_RESULTS:=$HC_DATA/results}"
 : "${HC_STATE:=$HC_DATA/state}"
 : "${HC_STATUS:=$HC_DATA/status}"
 : "${HC_USER:=claude}"
