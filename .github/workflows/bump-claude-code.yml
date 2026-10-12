@@ -47,4 +47,4 @@ jobs:
           git checkout -b "$branch"
           git commit -am "$title"
           git push origin "$branch"
-          gh pr create --title "$title" --body "Moves what the Dockerfile pins to what is current: Claude Code $claude, and the digests of \`node:22-bookworm-slim\` and \`ubuntu:24.04\`. The diff shows which of the three changed. Check that the add-on still works after installing this version."
+          gh pr create --title "$title" --body "Moves what the Dockerfile pins to what is current: Claude Code $claude, and the digests of \`node:22-bookworm-slim\` and \`ubuntu:24.04\`. The diff shows which of the three changed. The checks do not run by themselves on a pull request this workflow opens: close and reopen it to run them, and check that the add-on still works after installing this version."

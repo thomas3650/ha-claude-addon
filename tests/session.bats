@@ -140,8 +140,9 @@ load helpers
   chat="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-chat"
   grep -q 'quick_exits="$(chat_quick_exits "$quick_exits" "$((SECONDS - started))")"' "$chat"
   grep -q 'if (( quick_exits >= 3 )); then' "$chat"
-  # Nothing else in the loop changes the count.
-  [ "$(grep -c 'quick_exits=' "$chat")" -eq 2 ]
+  # A count that is no number gives up at once, and nothing else changes it.
+  grep -q '\[\[ "$quick_exits" =~ ^\[0-9\]+$ \]\] || quick_exits=3' "$chat"
+  [ "$(grep -c 'quick_exits=' "$chat")" -eq 3 ]
   give_up="$(grep -n 'quick_exits >= 3' "$chat" | cut -d: -f1)"
   shell="$(grep -n 'exec bash -l' "$chat" | tail -n 1 | cut -d: -f1)"
   wait="$(grep -n 'sleep 10' "$chat" | cut -d: -f1)"

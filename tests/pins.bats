@@ -33,20 +33,21 @@ WF="$ROOT/.github/workflows"
 
 @test "every action a workflow uses is named by its commit, with the version beside it" {
   [ "$(grep -h 'uses:' "$WF"/*.yml | wc -l)" -ge 6 ]
-  run grep -hE 'uses:' "$WF"/*.yml
-  while IFS= read -r line; do
-    [[ "$line" =~ uses:\ [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}\ \#\ v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-  done <<<"$output"
+  run grep -hEvc 'uses: [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40} # v[0-9]+\.[0-9]+\.[0-9]+$' <(grep -h 'uses:' "$WF"/*.yml)
+  [ "$output" -eq 0 ]
 }
 
-@test "the release workflow gives nothing by default, and no job more than it uses" {
-  rel="$WF/release.yml"
-  grep -qx 'permissions: {}' "$rel"
-  [ "$(grep -c '^    permissions:$' "$rel")" -eq 3 ]
-  # Only the job that pushes images reads the source and no more.
-  image="$(sed -n '/^  image:/,/^  publish:/p' "$rel")"
-  grep -q '^      contents: read$' <<<"$image"
-  grep -q '^      packages: write$' <<<"$image"
-  ! grep -q 'pull-requests\|issues' <<<"$image"
+# perms JOB NEXT - the permission lines of one job of the release workflow.
+perms() {
+  sed -n "/^  $1:/,/^  ${2:-zzz}:/p" "$WF/release.yml" \
+    | sed -n '/^    permissions:$/,/^    [a-z]/p' | grep '^      [a-z-]*: ' | sed 's/^ *//' | sort | tr '\n' ' '
+}
+
+@test "the release workflow gives nothing by default, and each job exactly what it uses" {
+  grep -qx 'permissions: {}' "$WF/release.yml"
+  [ "$(grep -c '^    permissions:$' "$WF/release.yml")" -eq 3 ]
+  [ "$(perms release-please image)" = "contents: write issues: write pull-requests: write " ]
+  [ "$(perms image publish)" = "contents: read packages: write " ]
+  [ "$(perms publish)" = "contents: write packages: write " ]
   grep -qx '  contents: read' "$WF/ci.yml"
 }

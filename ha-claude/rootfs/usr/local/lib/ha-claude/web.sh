@@ -255,9 +255,7 @@ check_proxy() {
 # the session the server names, say that the client is initialized, then
 # ask for the tools. Logs the entry's name only, never its upstream. A
 # refused entry was already logged when the configuration was rendered.
-# The session is not closed afterwards: that is a DELETE, and the listener
-# forwards nothing but a POST. A server that keeps sessions lets this one
-# run out by itself.
+# The session is not closed afterwards; DOCS.md says why.
 check_extra_mcp() {
   local entry name url code headers session names
   local -a hdr

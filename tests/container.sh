@@ -209,6 +209,8 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 [[ "$refused" == 403 ]] || fail "with the Supervisor-only line the panel answered '$refused' to another address, not 403"
+# The workers of the old configuration are given a moment to end.
+sleep 2
 [[ "$(docker exec "$name" curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:7681/claude/)" == 403 ]] || fail "with the Supervisor-only line a terminal still answered another address"
 [[ "$(code http://127.0.0.1:7684/mcp)" == 405 ]] || fail "the listener stopped answering when the panel got its Supervisor-only line"
 
