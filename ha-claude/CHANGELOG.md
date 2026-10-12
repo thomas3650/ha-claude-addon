@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.11.0...v0.12.0) (2026-10-12)
+
+
+### Features
+
+* a token of its own for an extra_mcp server, and https upstreams are verified ([#33](https://github.com/thomas3650/ha-claude-addon/issues/33)) ([5fea05d](https://github.com/thomas3650/ha-claude-addon/commit/5fea05d44a75935586b21e4b5a626f1fe46dead7))
+* run an agent by name without a terminal, and raise its result as an event ([#31](https://github.com/thomas3650/ha-claude-addon/issues/31)) ([d417319](https://github.com/thomas3650/ha-claude-addon/commit/d4173197e21c4b88c48d4ec75f6831bcc15b70e8))
+
 ## [0.11.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.10.1...v0.11.0) (2026-10-11)
 
 
