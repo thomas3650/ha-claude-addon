@@ -48,12 +48,14 @@ done
 grep -q "proxy: Home Assistant answered 502 through the listener" <<<"$(logs)" || fail "the check at start did not log the answer"
 
 # The token is in a file the Claude user cannot read, and not in the
-# configuration, which it can.
+# configuration. The configuration is for root only too: an extra server's
+# address in it may hold a secret path.
 docker exec "$name" grep -q 'Bearer smoke-secret' /run/ha-claude/proxy-auth.conf || fail "the token file does not hold the token"
 docker exec -u claude "$name" cat /run/ha-claude/proxy-auth.conf >/dev/null 2>&1 && fail "the Claude user can read the token file"
-conf="$(docker exec -u claude "$name" cat /etc/nginx/nginx.conf)" || fail "the Claude user cannot read the nginx configuration"
+conf="$(docker exec "$name" cat /etc/nginx/nginx.conf)" || fail "the nginx configuration cannot be read"
 grep -q 'mcp_upstream' <<<"$conf" || fail "the nginx configuration has no upstream"
-if grep -q 'smoke-secret' <<<"$conf"; then fail "the token is in a file the Claude user can read"; fi
+if grep -q 'smoke-secret' <<<"$conf"; then fail "the token is in the nginx configuration"; fi
+docker exec -u claude "$name" cat /etc/nginx/nginx.conf >/dev/null 2>&1 && fail "the Claude user can read nginx's configuration"
 docker exec -u claude "$name" nginx -T >/dev/null 2>&1 && fail "the Claude user can have nginx print its configuration"
 
 # The shell behind the second link runs as the Claude user, without the token.
@@ -194,7 +196,8 @@ docker rm -f "$name" >/dev/null
 # client's query string is dropped.
 docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all \
   -e HC_MCP_UPSTREAM=http://127.0.0.1:7690/core/api/mcp \
-  -e HC_EXTRA_MCP=x=http://127.0.0.1:7691/private_s3cret "$image" >/dev/null
+  -e "HC_EXTRA_MCP=$(printf 'x=http://127.0.0.1:7691/private_s3cret\nz=http://127.0.0.1:7692/held\ntls=https://example.invalid/x')" \
+  -e HC_EXTRA_MCP_AUTH=z=extra-secret "$image" >/dev/null
 for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
   sleep 1
@@ -225,6 +228,27 @@ for _ in $(seq 1 10); do
 done
 [[ "$sent" == "POST /private_s3cret none" ]] || fail "the listener sent on to the extra server '$sent'"
 grep -q "proxy: x answered" <<<"$(logs)" || fail "the extra server was not probed at start"
+
+# An extra MCP server with a token of its own: the listener sends that
+# token and no other, whatever the client sent; the Claude user cannot read
+# the file that holds it, and it is in no log line.
+docker exec -d "$name" node -e 'require("http").createServer((q, s) => s.end(q.method + " " + q.url + " " + (q.headers.authorization || "none"))).listen(7692, "127.0.0.1")' || fail "the second extra stand-in did not start"
+sent=""
+for _ in $(seq 1 10); do
+  sent="$(docker exec -u claude "$name" curl -s -m 10 -X POST -H 'Authorization: Bearer other' -d '{}' 'http://127.0.0.1:7684/mcp/z')" || true
+  [[ "$sent" == POST* ]] && break
+  sleep 1
+done
+[[ "$sent" == "POST /held Bearer extra-secret" ]] || fail "the listener sent on to the server with a token '$sent'"
+docker exec "$name" test -f /run/ha-claude/extra-auth-z.conf || fail "the extra server's token file is missing"
+docker exec -u claude "$name" cat /run/ha-claude/extra-auth-z.conf >/dev/null 2>&1 && fail "the Claude user can read an extra server's token"
+if grep -q "extra-secret\|smoke-secret" <<<"$(logs)"; then fail "a token reached the log"; fi
+
+# An https server: nginx started with its location, so the directives and
+# the certificate bundle are ones this nginx takes; a name that does not
+# resolve answers 502. The configuration itself is for root only.
+[[ "$(code -X POST http://127.0.0.1:7684/mcp/tls)" == 502 ]] || fail "the https extra address did not answer 502 for a name that does not resolve"
+docker exec -u claude "$name" cat /etc/nginx/nginx.conf >/dev/null 2>&1 && fail "the Claude user can read nginx's configuration"
 
 docker rm -f "$name" >/dev/null
 echo "container smoke test passed"

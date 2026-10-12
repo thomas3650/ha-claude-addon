@@ -36,6 +36,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `extra_packages` | Optional. Ubuntu packages to install at start |
 | `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; any other entry is refused. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
 | `extra_mcp` | More MCP servers for Claude, one `name=upstream` per entry, for example `tools=http://my-mcp:8000/path`. A name is lowercase letters, digits and `-`; an upstream is `http` or `https` with no query string, and its path is sent as it is (an upstream without a path receives `/mcp/<name>`). The upstream's own secret path, if it has one, is its credential and stays in this option; the add-on keeps the upstream's address out of its log. Read when the add-on starts. See "Home Assistant for Claude". |
+| `extra_mcp_auth` | Optional. A token for an `extra_mcp` server, one `name=token` per entry, where the name is that server's name in `extra_mcp`. The listener sends it to that server as `Authorization: Bearer <token>`; Claude never sees it. A token may hold letters, digits and `. _ ~ + / = -`, at most 2048 of them. Give a token only to an `https` server: over `http` it travels unencrypted, and the log says so. Read when the add-on starts. |
 | `morning_timeout` | The longest a morning run may take, in seconds. |
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 | `run_timeout` | The longest a run started with the `run` command may take, in seconds |
@@ -228,8 +229,14 @@ every exposed entity can be controlled. Whether Claude asks before it acts
 is decided by the permission rules in the working folder.
 
 With the option `extra_mcp` the listener forwards more addresses,
-`http://127.0.0.1:7684/mcp/<name>`, each to the MCP server you named, with
-no credential added: what such a server can reach is what you gave it.
+`http://127.0.0.1:7684/mcp/<name>`, each to the MCP server you named. The
+token Home Assistant gave the add-on is never sent to them. A server that
+needs a token of its own gets it from the option `extra_mcp_auth`: the
+listener adds it as the `Authorization` header, from a file only root can
+read, so Claude uses the server without ever holding its token. What such a
+server can reach is what you, or that token, gave it. An `https` server is
+sent its own name and must show a certificate the system's authorities
+vouch for; one that does not is refused.
 Each gets a server of type `http` in `.mcp.json`, and its tools get rules
 like any other.
 
@@ -261,8 +268,9 @@ tool is called `mcp__<server>__<name>`, with the server's name from
 extra server is tried the same way and logged by its name:
 `proxy: <name> answered NNN through the listener` and
 `proxy: <name> offers these tools: ...`. For an extra server, 404 means
-its path is wrong, 502 that it is down or its name does not resolve, and
-401 that it refused its own credential.
+its path is wrong, 502 that it is down, that its name does not resolve or,
+for an `https` server, that its certificate is not one the system's
+authorities vouch for, and 401 that it refused its own credential.
 
 ## Is it working?
 

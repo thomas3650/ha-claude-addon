@@ -31,6 +31,7 @@ options:
   extra_packages: []
   assistant_env: []
   extra_mcp: []
+  extra_mcp_auth: []
   morning_timeout: 900
   morning_max_turns: 40
   run_timeout: 900
@@ -46,6 +47,8 @@ schema:
     - match(^ASSISTANT_[A-Z0-9_]+=.*$)
   extra_mcp:
     - match(^[a-z][a-z0-9-]{0,31}=https?://[A-Za-z0-9._:/-]+$)
+  extra_mcp_auth:
+    - password
   morning_timeout: int(60,3600)
   morning_max_turns: int(1,200)
   run_timeout: int(60,3600)

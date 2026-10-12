@@ -38,3 +38,10 @@ load helpers
     if [[ "$bad" =~ $re ]]; then echo "accepted: $bad"; false; fi
   done
 }
+
+@test "the tokens of extra servers are a list of passwords, empty by default" {
+  f="$BATS_TEST_DIRNAME/../ha-claude/config.yaml"
+  grep -qx '  extra_mcp_auth: \[\]' "$f"
+  [ "$(sed -n '/^  extra_mcp_auth:$/{n;p;}' "$f")" = "    - password" ]
+}
+
