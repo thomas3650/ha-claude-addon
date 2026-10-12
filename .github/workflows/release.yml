@@ -4,21 +4,24 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  packages: write
+# Nothing by default; each job below asks for what it needs.
+permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-24.04
+    # Opens and updates the release pull request, and creates the tag and
+    # the release.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
     outputs:
       created: ${{ steps.rp.outputs.release_created }}
       tag: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: rp
         with:
           config-file: release-please-config.json
@@ -39,11 +42,15 @@ jobs:
             docker_arch: arm64
             ha_arch: aarch64
     runs-on: ${{ matrix.runner }}
+    # Reads the tagged source and pushes the image.
+    permissions:
+      contents: read
+      packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.release-please.outputs.tag }}
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -61,12 +68,16 @@ jobs:
   publish:
     needs: [release-please, image]
     runs-on: ubuntu-24.04
+    # Joins the two images, and moves the release branch.
+    permissions:
+      contents: write
+      packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.release-please.outputs.tag }}
           fetch-depth: 0
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

@@ -26,7 +26,47 @@ CONF="$BATS_TEST_DIRNAME/../ha-claude/rootfs/etc/nginx/templates/ingress.conf.tp
 }
 
 @test "nginx answers nothing but the page and the two terminals" {
-  grep -q 'location / { return 404; }' "$CONF"
+  # The panel's own server block only: the listener below it has its own test.
+  block="$(sed -n '/listen 7681;/,/listen 127.0.0.1:7684;/p' "$CONF")"
+  grep -q '^ *location = / {' <<<"$block"
+  grep -q '^ *location /claude/ {' <<<"$block"
+  grep -q '^ *location /shell/ {' <<<"$block"
+  grep -q '^ *location / { return 404; }' <<<"$block"
+  [ "$(grep -c '^ *location ' <<<"$block")" -eq 4 ]
+  [ "$(grep -c 'proxy_pass ' <<<"$block")" -eq 2 ]
+  [ "$(grep -c 'root ' <<<"$block")" -eq 1 ]
+}
+
+@test "the rendered configuration lets only the Supervisor reach the panel, unless the smoke test says otherwise" {
+  load_lib web
+  run render_nginx_conf "$CONF"
+  block="$(sed -n '/listen 7681;/,/listen 127.0.0.1:7684;/p' <<<"$output")"
+  [ "$(grep -c '^ *allow 172.30.32.2; deny all;$' <<<"$block")" -eq 1 ]
+  [ "$(grep -c 'allow \|deny ' <<<"$output")" -eq 1 ]
+  [[ "$output" != *__ALLOW__* ]]
+  HC_INGRESS_ALLOW=all run render_nginx_conf "$CONF"
+  [[ "$output" != *"deny all"* ]]
+  HC_INGRESS_ALLOW=yes run render_nginx_conf "$CONF"
+  [[ "$output" == *"allow 172.30.32.2; deny all;"* ]]
+}
+
+@test "the two requests of a probe carry their own ids" {
+  load_lib options web
+  set_options '{"extra_mcp":["tools=http://h:1/x"]}'
+  curl() {
+    printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"
+    if [[ "$*" == *initialize* || "$*" == *'"method":"ping"'* ]]; then printf '200'; fi
+  }
+  run check_proxy
+  run check_extra_mcp
+  grep -q '"id":1,"method":"ping"' "$BATS_TEST_TMPDIR/curl-args"
+  grep -q '"id":1,"method":"initialize"' "$BATS_TEST_TMPDIR/curl-args"
+  [ "$(grep -c '"id":2,"method":"tools/list"' "$BATS_TEST_TMPDIR/curl-args")" -eq 2 ]
+  run grep -c '"id":1,"method":"tools/list"' "$BATS_TEST_TMPDIR/curl-args"
+  [ "$output" -eq 0 ]
+  # A notification has no id at all.
+  run grep -c '"id":[0-9]*,"method":"notifications/initialized"' "$BATS_TEST_TMPDIR/curl-args"
+  [ "$output" -eq 0 ]
 }
 
 @test "the second listener is on the container's own loopback only" {

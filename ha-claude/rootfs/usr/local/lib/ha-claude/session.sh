@@ -71,3 +71,18 @@ restart_chat() {
   as_claude tmux -L "$HC_TMUX_SOCKET" kill-session -t "$HC_TMUX_SESSION" 2>/dev/null || true
   start_chat "${1:-}"
 }
+
+# chat_quick_exits <count so far> <seconds the last run took> - prints the
+# new count of runs in a row that ended within thirty seconds. A longer run
+# starts the count again. The chat loop leaves a shell when it reaches three:
+# Claude Code that cannot start is not started for ever.
+chat_quick_exits() {
+  local count="$1" took="$2"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  [[ "$took" =~ ^[0-9]+$ ]] || took=0
+  if (( took < 30 )); then
+    printf '%s' "$((count + 1))"
+  else
+    printf '0'
+  fi
+}

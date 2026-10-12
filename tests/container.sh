@@ -188,6 +188,30 @@ done
 docker exec "$name" test ! -e /data/handover/1999-01-01.md || fail "an old handover file survived a restart"
 docker exec "$name" test -e /data/handover/keep.md || fail "retention removed a file that is not a handover file"
 
+# The line that lets only the Supervisor reach the panel. Every container
+# here runs without it, so that the test can reach the panel itself. Here
+# nginx reads the configuration as a real system has it, and then runs
+# with it: the panel refuses this container's own request, and Claude's
+# way to Home Assistant, which is on the loopback and has no such line,
+# still answers.
+# shellcheck disable=SC2016  # expanded by the shell inside the container
+real='for f in paths log options web; do . /usr/local/lib/ha-claude/$f.sh; done
+  unset HC_INGRESS_ALLOW
+  ( umask 077; render_nginx_conf /etc/nginx/templates/ingress.conf.tpl > /etc/nginx/nginx.real.conf ) || exit 1
+  grep -q "allow 172.30.32.2; deny all;" /etc/nginx/nginx.real.conf || exit 2
+  nginx -t -q -c /etc/nginx/nginx.real.conf || exit 3
+  cp -p /etc/nginx/nginx.real.conf /etc/nginx/nginx.conf && nginx -s reload'
+docker exec "$name" bash -c "$real" || fail "nginx does not take the configuration with the Supervisor-only line (status $?)"
+refused=""
+for _ in $(seq 1 10); do
+  refused="$(docker exec "$name" curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:7681/)" || true
+  [[ "$refused" == 403 ]] && break
+  sleep 1
+done
+[[ "$refused" == 403 ]] || fail "with the Supervisor-only line the panel answered '$refused' to another address, not 403"
+[[ "$(docker exec "$name" curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:7681/claude/)" == 403 ]] || fail "with the Supervisor-only line a terminal still answered another address"
+[[ "$(code http://127.0.0.1:7684/mcp)" == 405 ]] || fail "the listener stopped answering when the panel got its Supervisor-only line"
+
 docker rm -f "$name" >/dev/null
 
 # What the listener sends on: a second container whose upstream is a

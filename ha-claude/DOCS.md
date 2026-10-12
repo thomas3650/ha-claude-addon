@@ -274,6 +274,10 @@ its path is wrong, 502 that it is down, that its name does not resolve or,
 for an `https` server, that its certificate is not one the system's
 authorities vouch for, and 401 that it refused its own credential.
 
+On a server that keeps sessions, that try opens one and does not close it:
+closing is a `DELETE`, and the listener forwards nothing but a `POST`. The
+server lets it run out.
+
 ## Is it working?
 
 Run `ha-claude-status` in the panel, under the link **Shell**. It shows whether the chat
