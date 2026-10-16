@@ -372,3 +372,11 @@ EOT
   handle_command 'sync'
   [ "$(cat "$CALLS")" = $'sync\nmanaged\nclear\noutcome sync ok' ]
 }
+
+@test "a sync of the same commit reports failed when the chat could not be cleared or started" {
+  load_lib morning commands; stub_actions
+  sync_workspace() { HC_SYNC_RESULT=same; }
+  clear_chat() { return 1; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
+}

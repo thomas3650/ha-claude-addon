@@ -62,7 +62,8 @@ Send one of these with Home Assistant's add-on stdin action:
 
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data. For `restart-chat` and `clear-chat` the outcome is
-`ok`, or `failed` when no chat session could be started. For `sync` it is `ok` when the
+`ok`, or `failed` when no chat session could be started; a `clear-chat`
+that had to restart instead is `ok`, and the log says so. For `sync` it is `ok` when the
 working folder was renewed or no repo is configured, `kept` when the
 working folder could not be renewed and the previous one stays in use, and
 `failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say

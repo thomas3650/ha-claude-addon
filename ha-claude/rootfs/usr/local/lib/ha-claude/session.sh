@@ -90,9 +90,18 @@ restart_chat() {
 # Escape ends a turn that is running and Ctrl-U a half-typed line, as a
 # restart does.
 : "${HC_CLEAR_WAIT:=15}"
+# The mark is in the Claude user's home, so it is read only when it is a
+# plain file, and with a time limit: a pipe or a link put in its place must
+# not hold up the add-on's commands.
 _clear_seen() {
-  local src at
-  read -r src at < "$HC_SESSION_MARK" 2>/dev/null || return 1
+  local line src at
+  [[ -f "$HC_SESSION_MARK" && ! -L "$HC_SESSION_MARK" ]] || return 1
+  if command -v timeout >/dev/null 2>&1; then
+    line="$(timeout 2 head -c 64 -- "$HC_SESSION_MARK" 2>/dev/null)" || return 1
+  else
+    line="$(head -c 64 -- "$HC_SESSION_MARK" 2>/dev/null)" || return 1
+  fi
+  read -r src at <<<"$line"
   [[ "$src" == clear && "$at" =~ ^[0-9]+$ ]] && (( at >= $1 ))
 }
 _chat_keys() {
@@ -111,6 +120,8 @@ clear_chat() {
     restart_chat "$prompt"
     return
   fi
+  # A mark from an earlier clear must not confirm this one.
+  as_claude rm -f "$HC_SESSION_MARK" 2>/dev/null || true
   since="$(date +%s)"
   _chat_keys Escape
   sleep 0.5
@@ -130,7 +141,7 @@ clear_chat() {
   declare -F clean_handover >/dev/null && clean_handover
   if [[ -n "$prompt" ]]; then
     as_claude tmux -L "$HC_TMUX_SOCKET" set-buffer -b hc-opening -- "$prompt"
-    as_claude tmux -L "$HC_TMUX_SOCKET" paste-buffer -d -b hc-opening -t "$HC_TMUX_SESSION"
+    as_claude tmux -L "$HC_TMUX_SOCKET" paste-buffer -p -d -b hc-opening -t "$HC_TMUX_SESSION"
     sleep 0.5
     _chat_keys Enter
   fi

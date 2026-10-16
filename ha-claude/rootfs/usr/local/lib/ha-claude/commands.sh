@@ -67,8 +67,11 @@ handle_command() {
       install_managed_settings
       if [[ "${HC_SYNC_RESULT:-ok}" == same ]]; then
         # Nothing new: a new conversation in the same session is enough.
-        clear_chat || log "commands: the chat session could not be cleared"
-        raise_outcome sync ok
+        if clear_chat; then
+          raise_outcome sync ok
+        else
+          raise_outcome sync failed
+        fi
       elif ! restart_chat; then
         raise_outcome sync failed
       elif [[ "${HC_SYNC_RESULT:-ok}" == kept ]]; then

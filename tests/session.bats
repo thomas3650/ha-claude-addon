@@ -237,7 +237,7 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   grep -q -- "send-keys -t chat Escape" "$BATS_TEST_TMPDIR/as_claude"
   grep -q -- "send-keys -t chat -l /clear" "$BATS_TEST_TMPDIR/as_claude"
   grep -q -- "set-buffer -b hc-opening -- Present the summary" "$BATS_TEST_TMPDIR/as_claude"
-  grep -q -- "paste-buffer -d -b hc-opening -t chat" "$BATS_TEST_TMPDIR/as_claude"
+  grep -q -- "paste-buffer -p -d -b hc-opening -t chat" "$BATS_TEST_TMPDIR/as_claude"
 }
 
 @test "clear_chat without an opening pastes nothing" {
@@ -276,4 +276,31 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   echo "startup $(( $(date +%s) + 100 ))" > "$HC_SESSION_MARK"
   clear_chat
   [ -f "$BATS_TEST_TMPDIR/r" ]
+}
+
+@test "clear_chat removes an earlier mark before it sends the keys, and takes no pipe or link for a mark" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CLEAR_WAIT=1
+  managed "$HOOKED"
+  chat_alive() { return 0; }
+  sleep() { :; }
+  as_claude() {
+    printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
+    [[ "$*" == *display-message* ]] && echo claude
+    return 0
+  }
+  restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
+  clear_chat
+  rm_line="$(grep -n -- "rm -f $HC_SESSION_MARK" "$BATS_TEST_TMPDIR/as_claude" | cut -d: -f1)"
+  esc_line="$(grep -n -- "send-keys -t chat Escape" "$BATS_TEST_TMPDIR/as_claude" | cut -d: -f1)"
+  [ -n "$rm_line" ] && [ "$rm_line" -lt "$esc_line" ]
+  mkdir -p "$(dirname "$HC_SESSION_MARK")"
+  echo "clear $(( $(date +%s) + 100 ))" > "$BATS_TEST_TMPDIR/real"
+  ln -s "$BATS_TEST_TMPDIR/real" "$HC_SESSION_MARK"
+  run _clear_seen 0
+  [ "$status" -ne 0 ]
+  rm "$HC_SESSION_MARK"
+  mkfifo "$HC_SESSION_MARK"
+  run _clear_seen 0
+  [ "$status" -ne 0 ]
 }
