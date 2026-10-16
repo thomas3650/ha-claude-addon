@@ -105,15 +105,16 @@ _clear_seen() {
   [[ "$src" == clear && "$at" =~ ^[0-9]+$ ]] && (( at >= $1 ))
 }
 # True when Claude Code runs in the chat's pane. The pane runs the chat
-# loop, a shell, so its own command is always bash: Claude Code is the
-# shell's child, started with --remote-control. Between two runs the child
-# is a sleep, and after three quick exits the pane is a login shell.
+# loop, a shell, so its own command is always bash: Claude Code is a
+# process on the pane's terminal started with --remote-control, however
+# deep below the shell. Between two runs there is only a sleep, and after
+# three quick exits a login shell.
 _pane_runs_claude() {
-  local pid
-  pid="$(as_claude tmux -L "$HC_TMUX_SOCKET" display-message -p -t "$HC_TMUX_SESSION" \
-           '#{pane_pid}' 2>/dev/null)" || return 1
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  pgrep -P "$pid" -f -- '--remote-control=' >/dev/null 2>&1
+  local tty
+  tty="$(as_claude tmux -L "$HC_TMUX_SOCKET" display-message -p -t "$HC_TMUX_SESSION" \
+           '#{pane_tty}' 2>/dev/null)" || return 1
+  [[ "$tty" =~ ^/dev/(pts/[0-9]+)$ ]] || return 1
+  pgrep -t "${BASH_REMATCH[1]}" -f -- '--remote-control=' >/dev/null 2>&1
 }
 _chat_keys() {
   as_claude tmux -L "$HC_TMUX_SOCKET" send-keys -t "$HC_TMUX_SESSION" "$@"
