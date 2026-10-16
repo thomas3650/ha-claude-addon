@@ -104,19 +104,28 @@ _clear_seen() {
   read -r src at <<<"$line"
   [[ "$src" == clear && "$at" =~ ^[0-9]+$ ]] && (( at >= $1 ))
 }
+# True when Claude Code runs in the chat's pane. The pane runs the chat
+# loop, a shell, so its own command is always bash: Claude Code is the
+# shell's child, started with --remote-control. Between two runs the child
+# is a sleep, and after three quick exits the pane is a login shell.
+_pane_runs_claude() {
+  local pid
+  pid="$(as_claude tmux -L "$HC_TMUX_SOCKET" display-message -p -t "$HC_TMUX_SESSION" \
+           '#{pane_pid}' 2>/dev/null)" || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  pgrep -P "$pid" -f -- '--remote-control=' >/dev/null 2>&1
+}
 _chat_keys() {
   as_claude tmux -L "$HC_TMUX_SOCKET" send-keys -t "$HC_TMUX_SESSION" "$@"
 }
 clear_chat() {
-  local prompt="${1:-}" cmd since waited=0
+  local prompt="${1:-}" since waited=0
   if ! managed_session_hook || ! chat_alive; then
     restart_chat "$prompt"
     return
   fi
-  cmd="$(as_claude tmux -L "$HC_TMUX_SOCKET" display-message -p -t "$HC_TMUX_SESSION" \
-           '#{pane_current_command}' 2>/dev/null)" || cmd=""
-  if [[ "$cmd" != claude ]]; then
-    log "chat: the pane runs '${cmd:0:40}', not Claude Code; restarting"
+  if ! _pane_runs_claude; then
+    log "chat: Claude Code is not running in the pane; restarting"
     restart_chat "$prompt"
     return
   fi

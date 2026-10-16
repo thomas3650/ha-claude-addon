@@ -208,7 +208,8 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
   managed "$HOOKED"
   chat_alive() { return 0; }
-  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" == *display-message* ]] && echo bash; return 0; }
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" == *display-message* ]] && echo 4242; return 0; }
+  pgrep() { return 1; }
   restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
   run clear_chat
   [ -f "$BATS_TEST_TMPDIR/r" ]
@@ -222,9 +223,10 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   managed "$HOOKED"
   chat_alive() { return 0; }
   sleep() { :; }
+  pgrep() { [[ "$*" == "-P 4242 -f -- --remote-control=" ]] && echo 5151; }
   as_claude() {
     printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
-    [[ "$*" == *display-message* ]] && echo claude
+    [[ "$*" == *display-message* ]] && echo 4242
     if [[ "$*" == *"-l /clear"* ]]; then
       mkdir -p "$(dirname "$HC_SESSION_MARK")"
       echo "clear $(date +%s)" > "$HC_SESSION_MARK"
@@ -246,9 +248,10 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   managed "$HOOKED"
   chat_alive() { return 0; }
   sleep() { :; }
+  pgrep() { [[ "$*" == "-P 4242 -f -- --remote-control=" ]] && echo 5151; }
   as_claude() {
     printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
-    [[ "$*" == *display-message* ]] && echo claude
+    [[ "$*" == *display-message* ]] && echo 4242
     [[ "$*" == *"-l /clear"* ]] && { mkdir -p "$(dirname "$HC_SESSION_MARK")"; echo "clear $(date +%s)" > "$HC_SESSION_MARK"; }
     return 0
   }
@@ -263,7 +266,8 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   managed "$HOOKED"
   chat_alive() { return 0; }
   sleep() { :; }
-  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" == *display-message* ]] && echo claude; return 0; }
+  pgrep() { [[ "$*" == "-P 4242 -f -- --remote-control=" ]] && echo 5151; }
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" == *display-message* ]] && echo 4242; return 0; }
   restart_chat() { echo "restart:${1:-}" > "$BATS_TEST_TMPDIR/r"; }
   clear_chat "hello"
   [ "$(cat "$BATS_TEST_TMPDIR/r")" = "restart:hello" ]
@@ -284,9 +288,10 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   managed "$HOOKED"
   chat_alive() { return 0; }
   sleep() { :; }
+  pgrep() { [[ "$*" == "-P 4242 -f -- --remote-control=" ]] && echo 5151; }
   as_claude() {
     printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
-    [[ "$*" == *display-message* ]] && echo claude
+    [[ "$*" == *display-message* ]] && echo 4242
     return 0
   }
   restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
@@ -302,5 +307,18 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   rm "$HC_SESSION_MARK"
   mkfifo "$HC_SESSION_MARK"
   run _clear_seen 0
+  [ "$status" -ne 0 ]
+}
+
+@test "Claude Code counts as running in the pane only as the pane's child with --remote-control" {
+  load_lib options env session
+  as_claude() { [[ "$*" == *"#{pane_pid}"* ]] && echo 4242; return 0; }
+  pgrep() { [[ "$*" == "-P 4242 -f -- --remote-control=" ]] && echo 5151; }
+  _pane_runs_claude
+  pgrep() { return 1; }
+  run _pane_runs_claude
+  [ "$status" -ne 0 ]
+  as_claude() { echo "not a pid"; }
+  run _pane_runs_claude
   [ "$status" -ne 0 ]
 }
