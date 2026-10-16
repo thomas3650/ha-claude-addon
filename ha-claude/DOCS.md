@@ -53,20 +53,46 @@ Send one of these with Home Assistant's add-on stdin action:
 | Command | Effect |
 |---|---|
 | `ping` | Raises the event `ha_claude_outcome` with outcome `ok` |
-| `sync` | Fetches the repo again and starts a new chat session |
-| `restart-chat` | Starts a new chat session |
-| `morning` | Runs the morning briefing, then starts a new chat session. See below |
+| `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation") |
+| `restart-chat` | Ends the chat session and starts a new one |
+| `clear-chat` | Starts a new conversation in the running chat session (see "A new conversation") |
+| `morning` | Runs the morning briefing, then starts a new conversation that presents the summary. See below |
 | `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
 
 Every command raises the event `ha_claude_outcome` with `command` and
-`outcome` in its data. For `restart-chat` the outcome is `ok`, or `failed`
-when no chat session could be started. For `sync` it is `ok` when the
+`outcome` in its data. For `restart-chat` and `clear-chat` the outcome is
+`ok`, or `failed` when no chat session could be started. For `sync` it is `ok` when the
 working folder was renewed or no repo is configured, `kept` when the
 working folder could not be renewed and the previous one stays in use, and
 `failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say
 why. For `report`, see below. For `run` the event also carries `agent`,
 the name that was asked for, when it is a name the command accepts.
+
+## A new conversation
+
+A restart makes a new session in the Claude app each time. Where it can,
+the add-on starts a new conversation in the running session instead: it
+sends Escape, Ctrl-U and `/clear` to it, and then the opening, if there is
+one. That ends a turn that is running and a line half typed in the panel,
+as a restart does. It does so only when all of these hold, and restarts
+otherwise:
+
+- The working folder's managed settings (`.claude/managed-settings.json`)
+  have a `SessionStart` hook. Claude Code runs it again after `/clear`, so
+  it is where the working folder gives the date; the add-on then leaves out
+  its own line with the date and the handover file. Without such a hook the
+  date would stay that of the day the session started.
+- The chat session runs, and Claude Code is what runs in it.
+- The hook confirms the clear: the chat's environment holds
+  `HA_CLAUDE_SESSION_MARK`, the path of a file, and the hook writes the
+  conversation's source and the time in seconds to it, as `clear
+  1760000000`. When that line has not come fifteen seconds after `/clear`,
+  the add-on restarts.
+
+When the managed settings set `permissions.defaultMode`, the chat starts in
+that mode; otherwise it starts with `--permission-mode default`. The runs
+without a terminal always do.
 
 ## The morning run
 
@@ -80,9 +106,9 @@ A run without a terminal cannot ask for permission: a tool that the working
 folder's settings do not allow is refused. Give the agent a tool list that
 holds only allowed tools.
 
-When the run has ended, the add-on ends the chat session and starts a new
-one. The new session opens by presenting the day's summary, or by saying
-that the run did not finish. The outcome is one of:
+When the run has ended, the add-on starts a new conversation (see "A new
+conversation"). It opens by presenting the day's summary, or by saying that
+the run did not finish. The outcome is one of:
 
 | Outcome | Meaning |
 |---|---|
