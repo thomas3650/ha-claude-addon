@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.12.2...v0.13.0) (2026-10-16)
+
+
+### Features
+
+* clear-chat, the mode and the date from the workspace's managed settings ([#39](https://github.com/thomas3650/ha-claude-addon/issues/39)) ([b7bac19](https://github.com/thomas3650/ha-claude-addon/commit/b7bac195a64b703a05d589b65638de491ce6893b))
+
 ## [0.12.2](https://github.com/thomas3650/ha-claude-addon/compare/v0.12.1...v0.12.2) (2026-10-12)
 
 
