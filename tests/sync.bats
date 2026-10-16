@@ -305,3 +305,50 @@ make_nested_fixture_repo() {
   [ "$status" -eq 0 ]
   [ "$output" = "home-assistant/assistant" ]
 }
+
+_ino() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
+
+@test "a second sync of the same commit leaves the workspace in place and says same" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  [ "$HC_SYNC_RESULT" = ok ]
+  before="$(_ino "$HC_WORKSPACE")"
+  sync_workspace
+  [ "$HC_SYNC_RESULT" = same ]
+  [ "$(_ino "$HC_WORKSPACE")" = "$before" ]
+  [ "$(cat "$HC_STATUS/last_sync_status")" = "ok" ]
+}
+
+@test "a sync of the same commit with another repo_path publishes again" {
+  load_lib options layout sync
+  make_fixture_repo
+  mkdir -p "$FIXTURE/other"
+  echo "other rules" > "$FIXTURE/other/CLAUDE.md"
+  git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com add -A
+  git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com commit -q -m other
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  set_options "{\"repo_url\":\"file://$FIXTURE\",\"repo_path\":\"other\"}"
+  sync_workspace
+  [ "$HC_SYNC_RESULT" = ok ]
+  [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "other rules" ]
+}
+
+@test "a sync of a new commit after an unchanged one publishes again" {
+  load_lib options layout sync
+  make_fixture_repo
+  set_options "{\"repo_url\":\"file://$FIXTURE\"}"
+  ensure_layout
+  sync_workspace
+  sync_workspace
+  [ "$HC_SYNC_RESULT" = same ]
+  echo "new rules" > "$FIXTURE/assistant/CLAUDE.md"
+  git -C "$FIXTURE" -c user.name=t -c user.email=t@example.com commit -q -am change
+  sync_workspace
+  [ "$HC_SYNC_RESULT" = ok ]
+  [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "new rules" ]
+}

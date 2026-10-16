@@ -65,7 +65,14 @@ handle_command() {
       sync_workspace
       ensure_layout
       install_managed_settings
-      if ! restart_chat; then
+      if [[ "${HC_SYNC_RESULT:-ok}" == same ]]; then
+        # Nothing new: a new conversation in the same session is enough.
+        if clear_chat; then
+          raise_outcome sync ok
+        else
+          raise_outcome sync failed
+        fi
+      elif ! restart_chat; then
         raise_outcome sync failed
       elif [[ "${HC_SYNC_RESULT:-ok}" == kept ]]; then
         raise_outcome sync kept
@@ -80,13 +87,20 @@ handle_command() {
         raise_outcome restart-chat failed
       fi
       ;;
+    clear-chat)
+      if clear_chat; then
+        raise_outcome clear-chat ok
+      else
+        raise_outcome clear-chat failed
+      fi
+      ;;
     morning)
       # The run is waited for here: until it has ended, no other command is
       # handled, so a second "morning" runs after the first one.
       local outcome=failed
       log "commands: the morning run starts"
       run_morning outcome
-      if [[ "$outcome" != not_configured ]] && ! restart_chat "$(opening_prompt "$outcome")"; then
+      if [[ "$outcome" != not_configured ]] && ! clear_chat "$(opening_prompt "$outcome")"; then
         log "commands: there is no chat session to present the morning run"
       fi
       raise_outcome morning "$outcome"

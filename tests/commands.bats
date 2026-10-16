@@ -7,6 +7,7 @@ stub_actions() {
   install_managed_settings() { echo "managed" >> "$CALLS"; }
   ensure_layout() { :; }
   restart_chat() { echo "restart${1:+ $1}" >> "$CALLS"; }
+  clear_chat() { echo "clear${1:+ $1}" >> "$CALLS"; }
   MORNING_OUTCOME=ok
   run_morning() { echo "run" >> "$CALLS"; printf -v "$1" '%s' "$MORNING_OUTCOME"; }
 }
@@ -116,19 +117,19 @@ stub_actions() {
   exec 9<&-
 }
 
-@test "morning runs the briefing, starts a new chat that presents the summary, and reports ok" {
+@test "morning runs the briefing, clears the chat with the summary's opening, and reports ok" {
   load_lib morning commands; stub_actions
   handle_command 'morning'
   [ "$(sed -n 1p "$CALLS")" = "run" ]
-  [ "$(sed -n 2p "$CALLS")" = "restart $(opening_prompt ok)" ]
+  [ "$(sed -n 2p "$CALLS")" = "clear $(opening_prompt ok)" ]
   [ "$(sed -n 3p "$CALLS")" = "outcome morning ok" ]
 }
 
-@test "a failed morning run still starts a new chat, which says so, and reports the outcome" {
+@test "a failed morning run still clears the chat, which says so, and reports the outcome" {
   load_lib morning commands; stub_actions
   MORNING_OUTCOME=timeout
   handle_command 'morning'
-  [ "$(sed -n 2p "$CALLS")" = "restart $(opening_prompt timeout)" ]
+  [ "$(sed -n 2p "$CALLS")" = "clear $(opening_prompt timeout)" ]
   [ "$(sed -n 3p "$CALLS")" = "outcome morning timeout" ]
 }
 
@@ -149,6 +150,7 @@ stub_actions() {
 for f in paths log options env morning commands; do . "$LIB/\$f.sh"; done
 raise_outcome() { :; }
 restart_chat() { :; }
+clear_chat() { :; }
 trap 'echo stopped; exit 0' TERM
 handle_command morning
 echo finished
@@ -182,7 +184,7 @@ EOT
 
 @test "a morning run keeps its outcome when the new chat session could not be started, and says so" {
   load_lib morning commands; stub_actions
-  restart_chat() { return 1; }
+  clear_chat() { return 1; }
   run handle_command 'morning'
   [[ "$output" == *"no chat session"* ]]
   [ "$(tail -1 "$CALLS")" = "outcome morning ok" ]
@@ -344,4 +346,37 @@ EOT
   grep -qx "stopped" "$BATS_TEST_TMPDIR/out"
   run grep "finished" "$BATS_TEST_TMPDIR/out"
   [ "$status" -eq 1 ]
+}
+
+@test "clear-chat clears the chat and reports the outcome" {
+  load_lib commands; stub_actions
+  handle_command 'clear-chat'
+  [ "$(cat "$CALLS")" = $'clear\noutcome clear-chat ok' ]
+  clear_chat() { return 1; }
+  handle_command 'clear-chat'
+  [ "$(tail -1 "$CALLS")" = "outcome clear-chat failed" ]
+}
+
+@test "clear-chat takes no opening from standard input" {
+  load_lib commands; stub_actions
+  run handle_command 'clear-chat say something'
+  [[ "$output" == *"ignoring"* ]]
+  [ ! -s "$CALLS" ]
+  run handle_command '{"command":"clear-chat say something"}'
+  [ ! -s "$CALLS" ]
+}
+
+@test "a sync of the same commit clears the chat instead of restarting it, and reports ok" {
+  load_lib morning commands; stub_actions
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nclear\noutcome sync ok' ]
+}
+
+@test "a sync of the same commit reports failed when the chat could not be cleared or started" {
+  load_lib morning commands; stub_actions
+  sync_workspace() { HC_SYNC_RESULT=same; }
+  clear_chat() { return 1; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
 }

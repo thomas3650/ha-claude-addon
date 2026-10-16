@@ -10,3 +10,4 @@
 : "${HC_STATUS:=$HC_DATA/status}"
 : "${HC_USER:=claude}"
 : "${HC_MANAGED_DIR:=/etc/claude-code}"
+: "${HC_SESSION_MARK:=$HC_HOME/.cache/ha-claude/session-mark}"

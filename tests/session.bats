@@ -2,6 +2,7 @@ load helpers
 
 @test "chat_command names the session and passes today's date and handover file" {
   load_lib options session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
   set_options '{"session_name":"Home"}'
   mkdir -p "$HC_WORKSPACE"
   run chat_command
@@ -147,4 +148,159 @@ load helpers
   shell="$(grep -n 'exec bash -l' "$chat" | tail -n 1 | cut -d: -f1)"
   wait="$(grep -n 'sleep 10' "$chat" | cut -d: -f1)"
   [ "$give_up" -lt "$shell" ] && [ "$shell" -lt "$wait" ]
+}
+
+# managed JSON - installs managed settings for the test.
+managed() { mkdir -p "$HC_MANAGED_DIR"; printf '%s' "$1" > "$HC_MANAGED_DIR/managed-settings.json"; }
+HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}}'
+
+@test "chat_command keeps the default mode and the date line when the managed settings give neither" {
+  load_lib options session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
+  mkdir -p "$HC_WORKSPACE"
+  managed '{"permissions":{"disableBypassPermissionsMode":"disable"}}'
+  run chat_command
+  [[ "$output" == *$'--permission-mode\ndefault'* ]]
+  [[ "$output" == *"Today is"* ]]
+}
+
+@test "chat_command leaves the mode to managed settings that set one, and the date to their SessionStart hook" {
+  load_lib options session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
+  mkdir -p "$HC_WORKSPACE"
+  managed '{"permissions":{"defaultMode":"auto"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}}'
+  run chat_command
+  [[ "$output" != *"--permission-mode"* ]]
+  [[ "$output" != *"Today is"* ]]
+  [[ "$output" == *"--remote-control="* ]]
+}
+
+@test "start_chat gives the chat session the path of the session mark" {
+  load_lib options env session
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
+  start_chat
+  grep -q -- "-e HA_CLAUDE_SESSION_MARK=$HC_SESSION_MARK" "$BATS_TEST_TMPDIR/as_claude"
+}
+
+@test "clear_chat restarts, with the opening, when the managed settings have no SessionStart hook" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
+  chat_alive() { return 0; }
+  restart_chat() { echo "restart:${1:-}" > "$BATS_TEST_TMPDIR/r"; }
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; }
+  clear_chat "hello"
+  [ "$(cat "$BATS_TEST_TMPDIR/r")" = "restart:hello" ]
+  [ ! -e "$BATS_TEST_TMPDIR/as_claude" ]
+}
+
+@test "clear_chat restarts when no chat session runs" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
+  managed "$HOOKED"
+  chat_alive() { return 1; }
+  restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
+  clear_chat
+  [ -f "$BATS_TEST_TMPDIR/r" ]
+}
+
+@test "clear_chat sends no key to a pane that does not run Claude Code, and restarts" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
+  managed "$HOOKED"
+  chat_alive() { return 0; }
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" == *display-message* ]] && echo bash; return 0; }
+  restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
+  run clear_chat
+  [ -f "$BATS_TEST_TMPDIR/r" ]
+  run grep -- "send-keys" "$BATS_TEST_TMPDIR/as_claude"
+  [ "$status" -eq 1 ]
+}
+
+@test "clear_chat sends /clear, then the opening, when the hook's mark confirms the clear" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CLEAR_WAIT=3
+  managed "$HOOKED"
+  chat_alive() { return 0; }
+  sleep() { :; }
+  as_claude() {
+    printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
+    [[ "$*" == *display-message* ]] && echo claude
+    if [[ "$*" == *"-l /clear"* ]]; then
+      mkdir -p "$(dirname "$HC_SESSION_MARK")"
+      echo "clear $(date +%s)" > "$HC_SESSION_MARK"
+    fi
+    return 0
+  }
+  restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
+  clear_chat "Present the summary"
+  [ ! -e "$BATS_TEST_TMPDIR/r" ]
+  grep -q -- "send-keys -t chat Escape" "$BATS_TEST_TMPDIR/as_claude"
+  grep -q -- "send-keys -t chat -l /clear" "$BATS_TEST_TMPDIR/as_claude"
+  grep -q -- "set-buffer -b hc-opening -- Present the summary" "$BATS_TEST_TMPDIR/as_claude"
+  grep -q -- "paste-buffer -p -d -b hc-opening -t chat" "$BATS_TEST_TMPDIR/as_claude"
+}
+
+@test "clear_chat without an opening pastes nothing" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CLEAR_WAIT=3
+  managed "$HOOKED"
+  chat_alive() { return 0; }
+  sleep() { :; }
+  as_claude() {
+    printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
+    [[ "$*" == *display-message* ]] && echo claude
+    [[ "$*" == *"-l /clear"* ]] && { mkdir -p "$(dirname "$HC_SESSION_MARK")"; echo "clear $(date +%s)" > "$HC_SESSION_MARK"; }
+    return 0
+  }
+  clear_chat
+  run grep -- "paste-buffer" "$BATS_TEST_TMPDIR/as_claude"
+  [ "$status" -eq 1 ]
+}
+
+@test "clear_chat restarts with the opening when no mark comes, or only an old one or one from a start" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CLEAR_WAIT=2
+  managed "$HOOKED"
+  chat_alive() { return 0; }
+  sleep() { :; }
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" == *display-message* ]] && echo claude; return 0; }
+  restart_chat() { echo "restart:${1:-}" > "$BATS_TEST_TMPDIR/r"; }
+  clear_chat "hello"
+  [ "$(cat "$BATS_TEST_TMPDIR/r")" = "restart:hello" ]
+  rm "$BATS_TEST_TMPDIR/r"
+  mkdir -p "$(dirname "$HC_SESSION_MARK")"
+  echo "clear 1" > "$HC_SESSION_MARK"
+  clear_chat
+  [ -f "$BATS_TEST_TMPDIR/r" ]
+  rm "$BATS_TEST_TMPDIR/r"
+  echo "startup $(( $(date +%s) + 100 ))" > "$HC_SESSION_MARK"
+  clear_chat
+  [ -f "$BATS_TEST_TMPDIR/r" ]
+}
+
+@test "clear_chat removes an earlier mark before it sends the keys, and takes no pipe or link for a mark" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CLEAR_WAIT=1
+  managed "$HOOKED"
+  chat_alive() { return 0; }
+  sleep() { :; }
+  as_claude() {
+    printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"
+    [[ "$*" == *display-message* ]] && echo claude
+    return 0
+  }
+  restart_chat() { echo restart > "$BATS_TEST_TMPDIR/r"; }
+  clear_chat
+  rm_line="$(grep -n -- "rm -f $HC_SESSION_MARK" "$BATS_TEST_TMPDIR/as_claude" | cut -d: -f1)"
+  esc_line="$(grep -n -- "send-keys -t chat Escape" "$BATS_TEST_TMPDIR/as_claude" | cut -d: -f1)"
+  [ -n "$rm_line" ] && [ "$rm_line" -lt "$esc_line" ]
+  mkdir -p "$(dirname "$HC_SESSION_MARK")"
+  echo "clear $(( $(date +%s) + 100 ))" > "$BATS_TEST_TMPDIR/real"
+  ln -s "$BATS_TEST_TMPDIR/real" "$HC_SESSION_MARK"
+  run _clear_seen 0
+  [ "$status" -ne 0 ]
+  rm "$HC_SESSION_MARK"
+  mkfifo "$HC_SESSION_MARK"
+  run _clear_seen 0
+  [ "$status" -ne 0 ]
 }

@@ -103,8 +103,9 @@ _publish_workspace() {
 }
 
 # After a call HC_SYNC_RESULT says what happened: "ok" (the working folder is
-# new), "kept" (it could not be renewed and the previous one stays) or
-# "none" (no repo is configured).
+# new), "same" (the fetched commit and folder are those of the last publish,
+# and the working folder was left in place), "kept" (it could not be renewed
+# and the previous one stays) or "none" (no repo is configured).
 # shellcheck disable=SC2034  # read by the command handler
 HC_SYNC_RESULT=""
 sync_workspace() {
@@ -148,11 +149,25 @@ sync_workspace() {
     _sync_status "failed: fetch"
     return 0
   fi
+  local commit published="$HC_STATE/published"
+  commit="$(git -C "$HC_REPO" rev-parse HEAD 2>/dev/null)" || commit=""
+  # The same commit and folder as the last publish: the workspace is left in
+  # place, so a running Claude Code keeps its folder.
+  if [[ -n "$commit" && -f "$published" && "$(cat "$published")" == "$commit $path" \
+        && -n "$(ls -A "$HC_WORKSPACE" 2>/dev/null)" ]]; then
+    date -u +%Y-%m-%dT%H:%M:%SZ > "$HC_STATUS/last_sync"
+    _sync_status ok
+    # shellcheck disable=SC2034
+    HC_SYNC_RESULT=same
+    log "sync: no new commit; the workspace is left as it is"
+    return 0
+  fi
   if ! _publish_workspace "$path"; then
     log "sync: the repo has no $path folder; keeping the previous workspace"
     _sync_status "failed: no $path folder"
     return 0
   fi
+  [[ -n "$commit" ]] && printf '%s\n' "$commit $path" > "$published"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$HC_STATUS/last_sync"
   _sync_status ok
   # shellcheck disable=SC2034
