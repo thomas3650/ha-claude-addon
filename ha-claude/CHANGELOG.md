@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.13.0...v0.13.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* clear-chat finds Claude Code as the child of the pane's shell ([#41](https://github.com/thomas3650/ha-claude-addon/issues/41)) ([af4d075](https://github.com/thomas3650/ha-claude-addon/commit/af4d0758c5538b2ed983c5ab3dcdd30ddb610b96))
+* clear-chat looks for Claude Code on the pane's terminal, at any depth ([#43](https://github.com/thomas3650/ha-claude-addon/issues/43)) ([44d42ac](https://github.com/thomas3650/ha-claude-addon/commit/44d42acd21ee406bd519d32de4897996a16cd3b4))
+
 ## [0.13.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.12.2...v0.13.0) (2026-10-16)
 
 
