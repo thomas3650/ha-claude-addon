@@ -122,6 +122,12 @@ handle_command() {
       run_report outcome "$arg"
       raise_outcome report "$outcome"
       ;;
+    memory)
+      # Waited for here, like the report.
+      local outcome=failed
+      run_memory outcome
+      raise_outcome memory "$outcome"
+      ;;
     run)
       # Waited for here, like the morning run. The chat session is left
       # alone. The agent's name goes into the event only when it is a name.

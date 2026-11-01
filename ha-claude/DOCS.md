@@ -61,6 +61,7 @@ Send one of these with Home Assistant's add-on stdin action:
 | `morning` | Runs the morning briefing, then, unless `morning_chat` is off, starts a new conversation that presents the summary. See below |
 | `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
+| `memory` | Writes the chat's memory to the add-on's log. See "The memory" |
 
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data. For `restart-chat` and `clear-chat` the outcome is
@@ -281,6 +282,39 @@ print nothing personal. While it runs, the output is in
 `/data/state/report.out`, which only root can read and which is left out of
 backups; it is removed when the command has ended. No other command is
 handled while a report runs.
+
+## The memory
+
+Claude Code keeps a memory for each working folder in the Claude user's
+home, as Markdown files in
+`/data/home/.claude/projects/-data-workspace-assistant/memory/`. That
+folder is not in the config share or the working folder's repo. On the
+command `memory` the add-on writes those files to its log, framed as the
+report is:
+
+```text
+[07:15:02] memory: begin
+[07:15:02] memory: | file: MEMORY.md
+[07:15:02] memory: | - [The boiler](boiler.md) is serviced in May
+[07:15:02] memory: | file: boiler.md
+[07:15:02] memory: | ...
+[07:15:02] memory: end, 4 lines
+[07:15:02] outcome: memory=ok
+```
+
+Each file `*.md` comes after a line with its name. At most 2000 lines are
+written, each cut at 500 characters; when there are more, the last line
+says `more left out`. Control characters are removed and empty lines are
+left out. The Claude user reads the files, with a time limit of 30
+seconds; a link, a pipe or anything else that is not a plain file is
+passed over, and so is a folder reached through a link. The outcome is
+`ok`, `empty` when there is no memory folder or no memory file in it, or
+`failed` when the reading ended with an error, took too long, or printed
+more than 1 MiB.
+
+The log is kept by Home Assistant and shown in its UI, so this puts what
+Claude has remembered there. Send the command only when you mean to read
+it, and leave anything secret out of what Claude is asked to remember.
 
 ## Home Assistant for Claude
 

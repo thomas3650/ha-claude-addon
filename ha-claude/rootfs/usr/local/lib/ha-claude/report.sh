@@ -28,10 +28,12 @@ report_configured() {
   as_claude test -r "$src" -a -x "$src" </dev/null >/dev/null 2>&1
 }
 
-# _report_frame - reads the file's output on standard input and prints it
-# framed: a first and a last line of the add-on's own, every line of the
-# output behind a prefix, at most HC_REPORT_LINES lines of at most
-# HC_REPORT_CHARS characters, control characters (C0, DEL and C1) removed,
+# _report_frame [label] [lines] [chars] [KiB] - reads the file's output on
+# standard input and prints it framed: a first and a last line of the
+# add-on's own, every line of the output behind a prefix ("report: | " by
+# default), at most HC_REPORT_LINES lines of at most HC_REPORT_CHARS
+# characters from at most HC_REPORT_KIB KiB, unless other limits are
+# given, control characters (C0, DEL and C1) removed,
 # empty lines left out. Bytes that are not UTF-8 are dropped first, so the
 # counting is in characters and a cut cannot split one. The C0 characters
 # and the empty lines go before the loop, in tr and grep, because the loop
@@ -40,21 +42,22 @@ report_configured() {
 _report_frame() {
   # shellcheck disable=SC2034  # read by bash itself
   local LC_ALL=C.UTF-8
-  local line n=0 more=0
-  printf 'report: begin\n'
+  local label="${1:-report}" max="${2:-$HC_REPORT_LINES}" chars="${3:-$HC_REPORT_CHARS}"
+  local kib="${4:-$HC_REPORT_KIB}" line n=0 more=0
+  printf '%s: begin\n' "$label"
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line//[[:cntrl:]]/}"
     line="${line//[$'\xc2\x80'-$'\xc2\x9f']/}"
     [[ -n "$line" ]] || continue
-    if (( n >= HC_REPORT_LINES )); then more=1; break; fi
+    if (( n >= max )); then more=1; break; fi
     n=$((n + 1))
-    printf 'report: | %s\n' "${line:0:HC_REPORT_CHARS}"
-  done < <(head -c "$((HC_REPORT_KIB * 1024))" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
+    printf '%s: | %s\n' "$label" "${line:0:chars}"
+  done < <(head -c "$((kib * 1024))" | iconv -c -f UTF-8 -t UTF-8 2>/dev/null \
            | tr -d '\000-\011\013-\037\177' | grep -av '^$')
   if (( more )); then
-    printf 'report: end, %d lines, more left out\n' "$n"
+    printf '%s: end, %d lines, more left out\n' "$label" "$n"
   else
-    printf 'report: end, %d lines\n' "$n"
+    printf '%s: end, %d lines\n' "$label" "$n"
   fi
 }
 
