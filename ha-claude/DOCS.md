@@ -41,6 +41,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 | `run_timeout` | The longest a run started with the `run` command may take, in seconds |
 | `run_max_turns` | The most steps Claude may take in such a run |
+| `morning_chat` | On (the default): after the `morning` command the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
 
 The add-on comes with GitHub's SSH host keys, so a server that answers for
 `github.com` with another key is refused. The key of any other host is
@@ -56,7 +57,7 @@ Send one of these with Home Assistant's add-on stdin action:
 | `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation") |
 | `restart-chat` | Ends the chat session and starts a new one |
 | `clear-chat` | Starts a new conversation in the running chat session (see "A new conversation") |
-| `morning` | Runs the morning briefing, then starts a new conversation that presents the summary. See below |
+| `morning` | Runs the morning briefing, then, unless `morning_chat` is off, starts a new conversation that presents the summary. See below |
 | `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
 
@@ -109,7 +110,9 @@ holds only allowed tools.
 
 When the run has ended, the add-on starts a new conversation (see "A new
 conversation"). It opens by presenting the day's summary, or by saying that
-the run did not finish. The outcome is one of:
+the run did not finish. With the option `morning_chat` off, the chat is
+left alone: the conversation in it goes on, and nothing is sent to it. The
+outcome is raised either way, and is one of:
 
 | Outcome | Meaning |
 |---|---|

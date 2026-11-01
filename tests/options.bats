@@ -45,3 +45,22 @@ load helpers
   [ "$(sed -n '/^  extra_mcp_auth:$/{n;p;}' "$f")" = "    - password" ]
 }
 
+@test "opt_bool reads true and false, and gives the default for a missing option or one that is not a bool" {
+  load_lib options
+  set_options '{"a":false,"b":true,"c":"false","d":0}'
+  [ "$(opt_bool '.a' true)" = false ]
+  [ "$(opt_bool '.b' false)" = true ]
+  [ "$(opt_bool '.c' true)" = true ]
+  [ "$(opt_bool '.d' true)" = true ]
+  [ "$(opt_bool '.missing' true)" = true ]
+  [ "$(opt_bool '.missing' false)" = false ]
+  rm "$HC_DATA/options.json"
+  [ "$(opt_bool '.a' true)" = true ]
+}
+
+@test "morning_chat defaults to true, a bool" {
+  f="$BATS_TEST_DIRNAME/../ha-claude/config.yaml"
+  grep -qx '  morning_chat: true' "$f"
+  grep -qx '  morning_chat: bool' "$f"
+}
+

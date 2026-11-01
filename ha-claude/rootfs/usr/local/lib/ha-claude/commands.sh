@@ -96,11 +96,13 @@ handle_command() {
       ;;
     morning)
       # The run is waited for here: until it has ended, no other command is
-      # handled, so a second "morning" runs after the first one.
+      # handled, so a second "morning" runs after the first one. With the
+      # option morning_chat off, the chat is left alone.
       local outcome=failed
       log "commands: the morning run starts"
       run_morning outcome
-      if [[ "$outcome" != not_configured ]] && ! clear_chat "$(opening_prompt "$outcome")"; then
+      if [[ "$outcome" != not_configured && "$(opt_bool '.morning_chat' true)" == true ]] \
+         && ! clear_chat "$(opening_prompt "$outcome")"; then
         log "commands: there is no chat session to present the morning run"
       fi
       raise_outcome morning "$outcome"
