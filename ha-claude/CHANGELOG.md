@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/thomas3650/ha-claude-addon/compare/v0.13.1...v0.13.2) (2026-11-01)
+
+
+### Bug Fixes
+
+* a refused result file names the check that failed ([#46](https://github.com/thomas3650/ha-claude-addon/issues/46)) ([1a5fb25](https://github.com/thomas3650/ha-claude-addon/commit/1a5fb25fb2f5077e5e7860b03aedc2fd1da0e120))
+
 ## [0.13.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.13.0...v0.13.1) (2026-10-16)
 
 
