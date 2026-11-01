@@ -66,9 +66,16 @@ handle_command() {
       ensure_layout
       install_managed_settings
       if [[ "${HC_SYNC_RESULT:-ok}" == same && "$(opt_bool '.chat_resume' false)" == true ]]; then
-        # Nothing new, and the conversation is kept: the chat is left alone,
-        # and started only when it does not run.
-        if start_chat; then
+        # Nothing new, and the conversation is kept: the chat is left alone
+        # when Claude Code runs in it, restarted (and so continued) when its
+        # pane is left at a shell, and started when it does not run.
+        local _sync_rc=0
+        if chat_alive && ! _pane_runs_claude; then
+          restart_chat || _sync_rc=$?
+        else
+          start_chat || _sync_rc=$?
+        fi
+        if (( _sync_rc == 0 )); then
           raise_outcome sync ok
         else
           raise_outcome sync failed

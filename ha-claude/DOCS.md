@@ -115,8 +115,10 @@ and only these end it:
 
 A `sync` that fetched something new restarts the chat, so Claude Code
 reads the new instructions, and continues the conversation. A `sync` with
-nothing new leaves the chat alone: nothing is sent to it, and it is started
-only when it does not run.
+nothing new leaves the chat alone when Claude Code runs in it: nothing is
+sent to it. A chat that does not run is started, and one left at a shell
+(after three quick exits, or before the login) is restarted; both continue
+the conversation.
 
 The runs without a terminal are never continued: Claude Code skips them.
 When continuing ends within thirty seconds, most likely because there was no

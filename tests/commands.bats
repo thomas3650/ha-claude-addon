@@ -395,6 +395,7 @@ EOT
 @test "with chat_resume a sync with nothing new leaves the chat alone, and a sync with something new restarts it" {
   load_lib options morning commands; stub_actions
   set_options '{"chat_resume":true}'
+  chat_alive() { return 1; }
   start_chat() { echo "start${1:+ $1}" >> "$CALLS"; }
   sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
   handle_command 'sync'
@@ -410,6 +411,27 @@ EOT
   sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=ok; }
   handle_command 'sync'
   [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
+}
+
+@test "with chat_resume a sync with nothing new restarts a chat whose pane no longer runs Claude Code" {
+  load_lib options morning commands; stub_actions
+  set_options '{"chat_resume":true}'
+  start_chat() { echo "start" >> "$CALLS"; }
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
+  # The chat is stuck at a shell: after three quick exits, or not logged in.
+  chat_alive() { return 0; }
+  _pane_runs_claude() { return 1; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
+  : > "$CALLS"
+  restart_chat() { echo "restart" >> "$CALLS"; return 1; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
+  : > "$CALLS"
+  # Claude Code runs: nothing is done to the chat.
+  _pane_runs_claude() { return 0; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nstart\noutcome sync ok' ]
 }
 
 @test "a sync of the same commit reports failed when the chat could not be cleared or started" {
