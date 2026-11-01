@@ -31,6 +31,7 @@ refused() {
   [ ! -e "$SENT/args" ]
   [ ! -e "$HC_STATE/result.body" ]
   [ ! -e "$HC_STATE/result.in" ]
+  [ ! -e "$HC_STATE/result.err" ]
 }
 
 @test "a good result is raised as one event with five fields" {
@@ -44,6 +45,7 @@ refused() {
   [ "$(jq -r '.verdict' "$SENT/body")" = "3 ting" ]
   [ "$(jq -r '.text' "$SENT/body")" = $'a\nb' ]
   [ ! -e "$HC_STATE/result.body" ]
+  [ ! -e "$HC_STATE/result.err" ]
 }
 
 @test "the token and the text are not on curl's command line or in the log" {
@@ -162,6 +164,35 @@ refused() {
     [[ "$output" == *"malformed"* ]]
     [[ "$output" != *"SECRET"* ]]
   done
+}
+
+@test "a refusal names the check that failed in one fixed word, and nothing of the content" {
+  load_lib options env result; stub_curl
+  local -a cases=(
+    'not json SECRET|not json'
+    '"SECRET|not json'
+    ' |shape'
+    '[1,2]|shape'
+    '{"count":1,"verdict":"v","text":"t"}{"count":1,"verdict":"v","text":"t"}|shape'
+    '{"count":1,"verdict":"v","text":"t","more":"SECRET"}|shape'
+    '{"count":"3","verdict":"v","text":"t"}|count'
+    '{"count":1,"verdict":7,"text":"t"}|type'
+    "{\"count\":1,\"verdict\":\"v\",\"text\":\"$(printf 'x%.0s' {1..4001})\"}|length"
+  )
+  local c
+  for c in "${cases[@]}"; do
+    good_file "${c%|*}"
+    refused
+    [ "${lines[-1]##*: }" = "malformed (${c##*|})" ]
+    [[ "$output" != *"SECRET"* ]]
+  done
+}
+
+@test "a refusal with no error line from jq reads as other" {
+  load_lib options env result; stub_curl; good_file
+  jq() { return 5; }
+  refused
+  [ "${lines[-1]##*: }" = "malformed (other)" ]
 }
 
 @test "a verdict of 121 characters and a text of 4001 are refused; 120 and 4000 pass" {
