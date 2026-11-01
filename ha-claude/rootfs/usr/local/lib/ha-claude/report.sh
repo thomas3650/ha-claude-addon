@@ -90,7 +90,7 @@ run_report() {
   ) </dev/null >>"$_rr_out" 2>/dev/null &
   wait $! || _rr_rc=$?
   if (( _rr_rc == 0 )); then
-    _report_frame < "$_rr_out" | log_lines
+    _report_frame report "$HC_REPORT_LINES" "$HC_REPORT_CHARS" "$HC_REPORT_KIB" < "$_rr_out" | log_lines
     printf -v "$1" '%s' ok
   elif (( _rr_rc == 124 )); then
     log "report: failed with status 124, the time limit"
