@@ -426,22 +426,93 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   export HC_CHAT_RESUME=true
   next_chat_argv
   [ "$CHAT_RESUMING" = 1 ]
-  # Continuing ended within thirty seconds: nothing to continue.
-  chat_resume_failed 2
+  # Continuing ended with an error within thirty seconds: nothing to continue.
+  chat_resume_failed 2 1
   next_chat_argv
   [[ "${CHAT_ARGV[*]}" != *"--continue"* ]]
   [ "$CHAT_RESUMING" = 0 ]
   # A fresh run that ends quickly is not a failed resume; it counts.
-  run chat_resume_failed 2
+  run chat_resume_failed 2 1
   [ "$status" -ne 0 ]
   # The start after it tries to continue again.
   next_chat_argv
   [ "$CHAT_RESUMING" = 1 ]
-  # A resumed run that lasted is no failure either.
-  run chat_resume_failed 40
+  # A resumed run that lasted is not one either, nor a quick clean exit.
+  run chat_resume_failed 40 1
   [ "$status" -ne 0 ]
-  run chat_resume_failed x
+  run chat_resume_failed 2 0
+  [ "$status" -ne 0 ]
+  run chat_resume_failed x y
   [ "$status" -eq 0 ]
+}
+
+@test "two resumed runs in a row that end with an error, however long, make the next start fresh" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_CHAT_RESUME=true
+  next_chat_argv
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  ! chat_resume_failed 400 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 0 ]
+  # A fresh start begins the count again.
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  ! chat_resume_failed 40 1
+  [ "$CHAT_RESUME_FAILS" = 1 ]
+  HC_CHAT_FRESH=1 next_chat_argv
+  [ "$CHAT_RESUMING" = 0 ]
+  ! chat_resume_failed 40 1
+  [ "$CHAT_RESUME_FAILS" = 0 ]
+  next_chat_argv
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  # So does a resumed run that ends without an error.
+  [ "$CHAT_RESUME_FAILS" = 1 ]
+  ! chat_resume_failed 40 0
+  [ "$CHAT_RESUME_FAILS" = 0 ]
+  next_chat_argv
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+}
+
+@test "how quick an exit is and how many failed resumes make a fresh start can be set" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_CHAT_RESUME=true HC_CHAT_QUICK=5 HC_RESUME_TRIES=1
+  [ "$(chat_quick_exits 0 4)" = 1 ]
+  [ "$(chat_quick_exits 1 5)" = 0 ]
+  next_chat_argv
+  ! chat_resume_failed 6 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 0 ]
+}
+
+@test "the chat loop gives up continuing after two slow failures, waiting before each start" {
+  STUB="$BATS_TEST_TMPDIR/stub"
+  mkdir -p "$STUB" "$HC_DATA/workspace/assistant" "$HC_DATA/home/.claude"
+  touch "$HC_DATA/home/.claude/.credentials.json"
+  printf '#!/usr/bin/env bash\necho "start $*" >> "%s/starts"\nexit 1\n' "$STUB" > "$STUB/claude"
+  chmod +x "$STUB/claude"
+  # No exit is quick here, so every run takes the normal path; the loop is
+  # ended after six waits.
+  {
+    printf 'slept=0\nsleep() { echo "sleep $*" >> "%s/starts"; slept=$((slept + 1)); (( slept < 6 )) || exit 0; }\n' "$STUB"
+    sed "s|^LIB=.*|LIB=$LIB|" "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-chat"
+  } > "$STUB/chat"
+  HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CHAT_RESUME=true HC_CHAT_QUICK=0 PATH="$STUB:$PATH" HOME="$BATS_TEST_TMPDIR" \
+    "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" 20 bash "$STUB/chat" \
+    </dev/null >"$BATS_TEST_TMPDIR/out" 2>&1
+  # Continue, continue, fresh, continue, continue, fresh, each followed by a wait.
+  [ "$(grep -c '^start' "$STUB/starts")" -eq 6 ]
+  [ "$(grep -c '^sleep 10$' "$STUB/starts")" -eq 6 ]
+  run bash -c "grep '^start' '$STUB/starts' | sed 's/.*--continue$/c/; s/^start.*/f/' | tr -d '\n'"
+  [ "$output" = "ccfccf" ]
 }
 
 @test "the chat loop starts fresh at once after a failed resume, and still leaves a shell after three quick fresh exits" {

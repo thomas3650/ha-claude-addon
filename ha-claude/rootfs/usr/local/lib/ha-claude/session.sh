@@ -61,17 +61,38 @@ next_chat_argv() {
   unset HC_OPENING_PROMPT HC_CHAT_FRESH HC_RESUME_FAILED
 }
 
-# chat_resume_failed <seconds the last run took> - true when the last run
-# continued a conversation and ended within thirty seconds: most likely
-# there was none to continue. It then sets HC_RESUME_FAILED, so the next
-# start is a new conversation. The chat loop starts that at once and does
-# not count the quick exit towards giving up; a new conversation that also
-# ends quickly does count, so the loop still gives up.
+# chat_resume_failed <seconds the last run took> <its exit code> - true when
+# the last run continued a conversation and ended with an error within
+# HC_CHAT_QUICK seconds: most likely there was none to continue. It then
+# sets HC_RESUME_FAILED, so the next start is a new conversation; the chat
+# loop starts that at once and does not count the quick exit towards giving
+# up. A new conversation that also ends quickly does count, so the loop
+# still gives up. A continued run that ends with an error later is counted
+# in CHAT_RESUME_FAILS and takes the loop's normal way; after HC_RESUME_TRIES
+# of them in a row the next start is a new conversation too. A run that ends
+# without an error, and a new conversation, start that count again.
+: "${HC_CHAT_QUICK:=30}"
+: "${HC_RESUME_TRIES:=2}"
 chat_resume_failed() {
-  local took="$1"
+  local took="$1" rc="$2"
   [[ "$took" =~ ^[0-9]+$ ]] || took=0
-  [[ "${CHAT_RESUMING:-0}" == 1 ]] && (( took < 30 )) || return 1
-  HC_RESUME_FAILED=1
+  [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
+  [[ "${CHAT_RESUME_FAILS:-}" =~ ^[0-9]+$ ]] || CHAT_RESUME_FAILS=0
+  if [[ "${CHAT_RESUMING:-0}" != 1 ]] || (( rc == 0 )); then
+    CHAT_RESUME_FAILS=0
+    return 1
+  fi
+  if (( took < HC_CHAT_QUICK )); then
+    CHAT_RESUME_FAILS=0
+    HC_RESUME_FAILED=1
+    return 0
+  fi
+  CHAT_RESUME_FAILS=$((CHAT_RESUME_FAILS + 1))
+  if (( CHAT_RESUME_FAILS >= HC_RESUME_TRIES )); then
+    CHAT_RESUME_FAILS=0
+    HC_RESUME_FAILED=1
+  fi
+  return 1
 }
 
 chat_alive() {
@@ -196,14 +217,15 @@ clear_chat() {
 }
 
 # chat_quick_exits <count so far> <seconds the last run took> - prints the
-# new count of runs in a row that ended within thirty seconds. A longer run
+# new count of runs in a row that ended within HC_CHAT_QUICK seconds
+# (thirty unless set otherwise, for the tests). A longer run
 # starts the count again. The chat loop leaves a shell when it reaches three:
 # Claude Code that cannot start is not started for ever.
 chat_quick_exits() {
   local count="$1" took="$2"
   [[ "$count" =~ ^[0-9]+$ ]] || count=0
   [[ "$took" =~ ^[0-9]+$ ]] || took=0
-  if (( took < 30 )); then
+  if (( took < HC_CHAT_QUICK )); then
     printf '%s' "$((count + 1))"
   else
     printf '0'

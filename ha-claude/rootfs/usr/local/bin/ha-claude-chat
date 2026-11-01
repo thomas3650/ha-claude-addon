@@ -30,9 +30,10 @@ EOT
   started=$SECONDS
   "${CHAT_ARGV[@]}"
   rc=$?
-  # Continuing a conversation that ended at once: start a new one now,
-  # without counting this exit (see chat_resume_failed).
-  if chat_resume_failed "$((SECONDS - started))"; then
+  # Continuing a conversation that failed at once: start a new one now,
+  # without counting this exit. A slower failure is counted there, and
+  # takes the way below (see chat_resume_failed).
+  if chat_resume_failed "$((SECONDS - started))" "$rc"; then
     echo "Claude Code could not continue the last conversation (code $rc). Starting a new one."
     continue
   fi

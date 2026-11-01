@@ -121,11 +121,14 @@ sent to it. A chat that does not run is started, and one left at a shell
 the conversation.
 
 The runs without a terminal are never continued: Claude Code skips them.
-When continuing ends within thirty seconds, most likely because there was no
-conversation to continue, the add-on starts a new conversation at once, and
-that exit does not count towards the three quick exits after which the
-panel is left with a shell. A new conversation that also ends that quickly
-does count. Later starts try to continue again.
+When continuing ends with an error within thirty seconds, most likely
+because there was no conversation to continue, the add-on starts a new
+conversation at once, and that exit does not count towards the three quick
+exits after which the panel is left with a shell. A new conversation that
+also ends that quickly does count. When continuing ends with an error
+later, the add-on waits ten seconds as after any exit; after two such
+failures in a row the next start is a new conversation. Later starts try
+to continue again.
 
 ## The morning run
 
