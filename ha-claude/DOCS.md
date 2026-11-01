@@ -42,7 +42,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `run_timeout` | The longest a run started with the `run` command may take, in seconds |
 | `run_max_turns` | The most steps Claude may take in such a run |
 | `morning_chat` | On (the default): after the `morning` command the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
-| `chat_resume` | Off (the default): every start of the chat is a new conversation. On: the chat continues its last conversation after a `sync`, a `restart-chat` and a start of the add-on, so only `clear-chat`, `/clear` and the morning's opening end it. See "Keeping the conversation" |
+| `chat_resume` | Off (the default): every start of the chat is a new conversation. On: the chat continues its last conversation after a `sync`, a `restart-chat` and a start of the add-on, so it is ended by `clear-chat`, `/clear` and the morning's opening. See "Keeping the conversation", which also covers the one case where a cleared conversation can come back |
 
 The add-on comes with GitHub's SSH host keys, so a server that answers for
 `github.com` with another key is refused. The key of any other host is
@@ -112,6 +112,10 @@ and only these end it:
   a new conversation, and a start with an opening never continues one;
 - a `clear-chat` or a `morning` whose clear has to be a restart (see "A new
   conversation"): the restart is a new conversation too.
+
+Claude Code saves a conversation only once it has a message. After a clear
+with nothing typed since, the last saved conversation is the one before
+the clear, so a restart then may bring that one back.
 
 A `sync` that fetched something new restarts the chat, so Claude Code
 reads the new instructions, and continues the conversation. A `sync` with
@@ -291,9 +295,11 @@ handled while a report runs.
 ## The memory
 
 Claude Code keeps a memory for each working folder in the Claude user's
-home, as Markdown files in
+home, as Markdown files in its default project memory folder,
 `/data/home/.claude/projects/-data-workspace-assistant/memory/`. That
-folder is not in the config share or the working folder's repo. On the
+folder is not in the config share or the working folder's repo. A memory
+moved elsewhere with the setting `autoMemoryDirectory` is not followed:
+the command reads the default folder only. On the
 command `memory` the add-on writes those files to its log, framed as the
 report is:
 
@@ -311,11 +317,13 @@ Each file `*.md` comes after a line with its name. At most 2000 lines are
 written, each cut at 500 characters; when there are more, the last line
 says `more left out`. Control characters are removed and empty lines are
 left out. The Claude user reads the files, with a time limit of 30
-seconds; a link, a pipe or anything else that is not a plain file is
-passed over, and so is a folder reached through a link. The outcome is
-`ok`, `empty` when there is no memory folder or no memory file in it, or
-`failed` when the reading ended with an error, took too long, or printed
-more than 1 MiB.
+seconds; a link, a file with more than one name (a hard link), a pipe or
+anything else that is not a plain file is passed over. The outcome is
+`ok`; `empty` when there is no memory folder or no memory file in it; or
+`failed` when the folder is reached through a link or is not a folder, the
+folder or a file in it cannot be read, the reading took too long, or it
+printed more than 1 MiB. A failed reading writes nothing of the memory to
+the log, only a line that says why.
 
 The log is kept by Home Assistant and shown in its UI, so this puts what
 Claude has remembered there. Send the command only when you mean to read

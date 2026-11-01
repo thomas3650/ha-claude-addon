@@ -21,20 +21,28 @@ memory_dir() {
 }
 
 # What the Claude user runs: prints each memory file's name on a line, then
-# the file. Exits with 10 when the folder is missing, is reached through a
-# link, or holds no memory file.
+# the file. A file is read only when it is a regular file with one name: a
+# link, a hard link to a file elsewhere and a pipe are passed over. Exits
+# with 10 when the folder is missing or holds no memory file, with 11 when
+# the folder, or a folder on the way to it from the home, is a link or not
+# a folder, with 12 when the folder cannot be read, and with the error of a
+# file that cannot be read.
 # shellcheck disable=SC2016  # expanded by the shell that runs it
 HC_MEMORY_READER='
 dir="$1" home="$2" found=0
-[[ -d "$dir" ]] || exit 10
-real="$(cd -P -- "$dir" 2>/dev/null && pwd -P)" || exit 10
-home="$(cd -P -- "$home" 2>/dev/null && pwd -P)" || exit 10
-[[ "$real" == "$home/${dir#"$2"/}" ]] || exit 10
+[[ -e "$dir" || -L "$dir" ]] || exit 10
+[[ -d "$dir" && ! -L "$dir" ]] || exit 11
+[[ -r "$dir" && -x "$dir" ]] || exit 12
+real="$(cd -P -- "$dir" 2>/dev/null && pwd -P)" || exit 12
+home="$(cd -P -- "$home" 2>/dev/null && pwd -P)" || exit 12
+[[ "$real" == "$home/${dir#"$2"/}" ]] || exit 11
 for f in "$dir"/*.md; do
   [[ -f "$f" && ! -L "$f" ]] || continue
+  links="$(stat -c %h -- "$f" 2>/dev/null || stat -f %l -- "$f" 2>/dev/null)"
+  [[ "$links" == 1 ]] || continue
   found=1
   printf "file: %s\n" "${f##*/}"
-  cat -- "$f"
+  cat -- "$f" || exit
   printf "\n"
 done
 (( found )) || exit 10
@@ -59,6 +67,12 @@ run_memory() {
     printf -v "$1" '%s' ok
   elif (( _rm_rc == 10 )); then
     printf -v "$1" '%s' empty
+  elif (( _rm_rc == 11 )); then
+    log "memory: the folder is not a plain folder"
+    printf -v "$1" '%s' failed
+  elif (( _rm_rc == 12 )); then
+    log "memory: the folder cannot be read"
+    printf -v "$1" '%s' failed
   elif (( _rm_rc == 124 )); then
     log "memory: failed with status 124, the time limit"
     printf -v "$1" '%s' failed

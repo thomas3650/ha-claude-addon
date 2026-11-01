@@ -54,11 +54,12 @@ run_it() { run_memory got 2> "$BATS_TEST_TMPDIR/err"; }
   ! grep -qx 'memory: | 2000' <(logged)
 }
 
-@test "a link or a pipe in the memory folder is not followed, nor a linked memory folder" {
+@test "a link, a hard link or a pipe in the memory folder is not followed" {
   load_lib options env report memory
   stub_memory
   printf 'secret-value\n' > "$BATS_TEST_TMPDIR/elsewhere.md"
   ln -s "$BATS_TEST_TMPDIR/elsewhere.md" "$MEM/link.md"
+  ln "$BATS_TEST_TMPDIR/elsewhere.md" "$MEM/hard.md"
   mkfifo "$MEM/pipe.md"
   printf 'kept\n' > "$MEM/real.md"
   started=$SECONDS
@@ -66,13 +67,65 @@ run_it() { run_memory got 2> "$BATS_TEST_TMPDIR/err"; }
   (( SECONDS - started < 10 ))
   [ "$got" = "ok" ]
   [ "$(logged)" = $'memory: begin\nmemory: | file: real.md\nmemory: | kept\nmemory: end, 2 lines' ]
+}
+
+@test "a memory folder reached through a link, or one that cannot be read, is failed, not empty" {
+  load_lib options env report memory
+  stub_memory
+  printf 'secret-value\n' > "$BATS_TEST_TMPDIR/elsewhere.md"
   rm -rf "$MEM"
   mkdir -p "$BATS_TEST_TMPDIR/other"
   cp "$BATS_TEST_TMPDIR/elsewhere.md" "$BATS_TEST_TMPDIR/other/a.md"
   ln -s "$BATS_TEST_TMPDIR/other" "$MEM"
   run_it
-  [ "$got" = "empty" ]
+  [ "$got" = "failed" ]
+  grep -q 'memory: the folder is not a plain folder' "$BATS_TEST_TMPDIR/err"
   ! grep -q 'secret-value' "$BATS_TEST_TMPDIR/err"
+  rm "$MEM"
+  mkdir -p "$MEM"
+  printf 'x\n' > "$MEM/a.md"
+  chmod 000 "$MEM"
+  run_it
+  chmod 755 "$MEM"
+  [ "$got" = "failed" ]
+  grep -q 'memory: the folder cannot be read' "$BATS_TEST_TMPDIR/err"
+}
+
+@test "a memory file that cannot be read makes the outcome failed, and nothing is framed" {
+  load_lib options env report memory
+  stub_memory
+  printf 'x\n' > "$MEM/a.md"
+  printf 'y\n' > "$MEM/b.md"
+  chmod 000 "$MEM/b.md"
+  run_it
+  chmod 644 "$MEM/b.md"
+  [ "$got" = "failed" ]
+  ! grep -q 'memory: begin' "$BATS_TEST_TMPDIR/err"
+  grep -q 'memory: failed with status' "$BATS_TEST_TMPDIR/err"
+}
+
+@test "more than the size cap is failed, and nothing is framed" {
+  load_lib options env report memory
+  stub_memory
+  export HC_MEMORY_KIB=4
+  head -c 10000 /dev/zero | tr '\0' a > "$MEM/a.md"
+  run_it
+  [ "$got" = "failed" ]
+  ! grep -q 'memory: begin' "$BATS_TEST_TMPDIR/err"
+}
+
+@test "a reading that takes longer than the time limit is failed" {
+  load_lib options env report memory
+  stub_memory
+  export HC_MEMORY_LIMIT=1 HC_MEMORY_GRACE=1
+  printf 'x\n' > "$MEM/a.md"
+  HC_MEMORY_READER='trap "" TERM; exec sleep 60'
+  started=$SECONDS
+  run_it
+  (( SECONDS - started < 10 ))
+  [ "$got" = "failed" ]
+  grep -q 'memory: failed with status 124, the time limit' "$BATS_TEST_TMPDIR/err"
+  pkill -f 'sleep 60' 2>/dev/null || true
 }
 
 @test "lines that imitate the log and control characters stay inside the frame" {
