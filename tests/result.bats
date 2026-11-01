@@ -31,6 +31,7 @@ refused() {
   [ ! -e "$SENT/args" ]
   [ ! -e "$HC_STATE/result.body" ]
   [ ! -e "$HC_STATE/result.in" ]
+  [ ! -e "$HC_STATE/result.err" ]
 }
 
 @test "a good result is raised as one event with five fields" {
@@ -160,6 +161,27 @@ refused() {
     good_file "$bad"
     refused
     [[ "$output" == *"malformed"* ]]
+    [[ "$output" != *"SECRET"* ]]
+  done
+}
+
+@test "a refusal names the check that failed in one fixed word, and nothing of the content" {
+  load_lib options env result; stub_curl
+  local -a cases=(
+    'not json SECRET|not json'
+    '"SECRET|not json'
+    '[1,2]|shape'
+    '{"count":1,"verdict":"v","text":"t"}{"count":1,"verdict":"v","text":"t"}|shape'
+    '{"count":1,"verdict":"v","text":"t","more":"SECRET"}|shape'
+    '{"count":"3","verdict":"v","text":"t"}|count'
+    '{"count":1,"verdict":7,"text":"t"}|type'
+    "{\"count\":1,\"verdict\":\"v\",\"text\":\"$(printf 'x%.0s' {1..4001})\"}|length"
+  )
+  local c
+  for c in "${cases[@]}"; do
+    good_file "${c%|*}"
+    refused
+    [ "${lines[-1]##*: }" = "malformed (${c##*|})" ]
     [[ "$output" != *"SECRET"* ]]
   done
 }
