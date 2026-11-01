@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.13.2...v0.14.0) (2026-11-01)
+
+
+### Features
+
+* the chat can live on: morning_chat, chat_resume and the memory command ([#48](https://github.com/thomas3650/ha-claude-addon/issues/48)) ([87b6fc7](https://github.com/thomas3650/ha-claude-addon/commit/87b6fc77e62183c50d0e19957c7bfeab43303d5a))
+
 ## [0.13.2](https://github.com/thomas3650/ha-claude-addon/compare/v0.13.1...v0.13.2) (2026-11-01)
 
 
