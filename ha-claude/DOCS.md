@@ -42,6 +42,7 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `run_timeout` | The longest a run started with the `run` command may take, in seconds |
 | `run_max_turns` | The most steps Claude may take in such a run |
 | `morning_chat` | On (the default): after the `morning` command the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
+| `chat_resume` | Off (the default): every start of the chat is a new conversation. On: the chat continues its last conversation after a `sync`, a `restart-chat` and a start of the add-on, so only `clear-chat`, `/clear` and the morning's opening end it. See "Keeping the conversation" |
 
 The add-on comes with GitHub's SSH host keys, so a server that answers for
 `github.com` with another key is refused. The key of any other host is
@@ -54,8 +55,8 @@ Send one of these with Home Assistant's add-on stdin action:
 | Command | Effect |
 |---|---|
 | `ping` | Raises the event `ha_claude_outcome` with outcome `ok` |
-| `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation") |
-| `restart-chat` | Ends the chat session and starts a new one |
+| `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation"). With `chat_resume` on, the new session continues the conversation, and a sync with nothing new leaves the chat alone (see "Keeping the conversation") |
+| `restart-chat` | Ends the chat session and starts a new one; with `chat_resume` on, the new one continues the conversation |
 | `clear-chat` | Starts a new conversation in the running chat session (see "A new conversation") |
 | `morning` | Runs the morning briefing, then, unless `morning_chat` is off, starts a new conversation that presents the summary. See below |
 | `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
@@ -95,6 +96,33 @@ otherwise:
 When the managed settings set `permissions.defaultMode`, the chat starts in
 that mode; otherwise it starts with `--permission-mode default`. The runs
 without a terminal always do.
+
+## Keeping the conversation
+
+By default every start of the chat is a new conversation: after `sync`,
+`restart-chat`, a start of the add-on, and when Claude Code has exited and
+the add-on starts it again. With the option `chat_resume` on, those starts
+continue the last conversation in the working folder instead
+(`claude --continue`), so the session in the Claude app keeps what was said
+and only these end it:
+
+- `clear-chat`, and `/clear` typed in the chat;
+- the `morning` command, when `morning_chat` is on: its opening belongs to
+  a new conversation, and a start with an opening never continues one;
+- a `clear-chat` or a `morning` whose clear has to be a restart (see "A new
+  conversation"): the restart is a new conversation too.
+
+A `sync` that fetched something new restarts the chat, so Claude Code
+reads the new instructions, and continues the conversation. A `sync` with
+nothing new leaves the chat alone: nothing is sent to it, and it is started
+only when it does not run.
+
+The runs without a terminal are never continued: Claude Code skips them.
+When continuing ends within thirty seconds, most likely because there was no
+conversation to continue, the add-on starts a new conversation at once, and
+that exit does not count towards the three quick exits after which the
+panel is left with a shell. A new conversation that also ends that quickly
+does count. Later starts try to continue again.
 
 ## The morning run
 

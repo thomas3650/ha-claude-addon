@@ -392,6 +392,26 @@ EOT
   [ "$(cat "$CALLS")" = $'sync\nmanaged\nclear\noutcome sync ok' ]
 }
 
+@test "with chat_resume a sync with nothing new leaves the chat alone, and a sync with something new restarts it" {
+  load_lib options morning commands; stub_actions
+  set_options '{"chat_resume":true}'
+  start_chat() { echo "start${1:+ $1}" >> "$CALLS"; }
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
+  handle_command 'sync'
+  # start_chat does nothing when the chat runs, and starts it when it does not.
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nstart\noutcome sync ok' ]
+  : > "$CALLS"
+  start_chat() { return 1; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
+  : > "$CALLS"
+  # Something new: a restart, without an opening, so the new instructions
+  # load and the chat loop continues the conversation (see session.bats).
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=ok; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
+}
+
 @test "a sync of the same commit reports failed when the chat could not be cleared or started" {
   load_lib options morning commands; stub_actions
   sync_workspace() { HC_SYNC_RESULT=same; }

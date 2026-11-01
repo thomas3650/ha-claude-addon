@@ -30,6 +30,12 @@ EOT
   started=$SECONDS
   "${CHAT_ARGV[@]}"
   rc=$?
+  # Continuing a conversation that ended at once: start a new one now,
+  # without counting this exit (see chat_resume_failed).
+  if chat_resume_failed "$((SECONDS - started))"; then
+    echo "Claude Code could not continue the last conversation (code $rc). Starting a new one."
+    continue
+  fi
   quick_exits="$(chat_quick_exits "$quick_exits" "$((SECONDS - started))")"
   # A count that is no number means the rule itself is broken: leave the shell.
   [[ "$quick_exits" =~ ^[0-9]+$ ]] || quick_exits=3

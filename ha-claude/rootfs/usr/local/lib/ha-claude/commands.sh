@@ -65,7 +65,15 @@ handle_command() {
       sync_workspace
       ensure_layout
       install_managed_settings
-      if [[ "${HC_SYNC_RESULT:-ok}" == same ]]; then
+      if [[ "${HC_SYNC_RESULT:-ok}" == same && "$(opt_bool '.chat_resume' false)" == true ]]; then
+        # Nothing new, and the conversation is kept: the chat is left alone,
+        # and started only when it does not run.
+        if start_chat; then
+          raise_outcome sync ok
+        else
+          raise_outcome sync failed
+        fi
+      elif [[ "${HC_SYNC_RESULT:-ok}" == same ]]; then
         # Nothing new: a new conversation in the same session is enough.
         if clear_chat; then
           raise_outcome sync ok
