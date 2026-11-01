@@ -36,15 +36,19 @@ _result_body() {
 
 # _result_reason <file> - prints which check refused the result, one fixed
 # word, from jq's message in the file: shape, count, type or length when
-# one of them did, else "not json". Nothing else of the message is printed,
-# as a parse error can quote the content.
+# one of them did, "not json" for any other jq error (the file did not
+# parse), and "other" when jq gave no error line at all (jq missing or
+# killed, the body not written). Nothing else of the message is printed.
 _result_reason() {
-  case "$(tail -n 1 -- "$1" 2>/dev/null)" in
+  local last
+  last="$(tail -n 1 -- "$1" 2>/dev/null)"
+  case "$last" in
     *': shape') echo shape ;;
     *': count') echo count ;;
     *': type') echo type ;;
     *': length') echo length ;;
-    *) echo 'not json' ;;
+    'jq: error'*) echo 'not json' ;;
+    *) echo other ;;
   esac
 }
 
@@ -81,7 +85,7 @@ publish_result() {
     return 1
   fi
   mkdir -p "$HC_STATE"
-  rm -f "$copy" "$body"
+  rm -f "$copy" "$body" "$err"
   ( umask 077; : > "$copy" )
   as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$HC_RESULT_WAIT" \
     head -c "$((HC_RESULT_BYTES + 1))" -- "$file" </dev/null >>"$copy" 2>/dev/null &

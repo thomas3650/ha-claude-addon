@@ -45,6 +45,7 @@ refused() {
   [ "$(jq -r '.verdict' "$SENT/body")" = "3 ting" ]
   [ "$(jq -r '.text' "$SENT/body")" = $'a\nb' ]
   [ ! -e "$HC_STATE/result.body" ]
+  [ ! -e "$HC_STATE/result.err" ]
 }
 
 @test "the token and the text are not on curl's command line or in the log" {
@@ -170,6 +171,7 @@ refused() {
   local -a cases=(
     'not json SECRET|not json'
     '"SECRET|not json'
+    ' |shape'
     '[1,2]|shape'
     '{"count":1,"verdict":"v","text":"t"}{"count":1,"verdict":"v","text":"t"}|shape'
     '{"count":1,"verdict":"v","text":"t","more":"SECRET"}|shape'
@@ -184,6 +186,13 @@ refused() {
     [ "${lines[-1]##*: }" = "malformed (${c##*|})" ]
     [[ "$output" != *"SECRET"* ]]
   done
+}
+
+@test "a refusal with no error line from jq reads as other" {
+  load_lib options env result; stub_curl; good_file
+  jq() { return 5; }
+  refused
+  [ "${lines[-1]##*: }" = "malformed (other)" ]
 }
 
 @test "a verdict of 121 characters and a text of 4001 are refused; 120 and 4000 pass" {

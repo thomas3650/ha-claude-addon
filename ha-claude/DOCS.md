@@ -184,7 +184,21 @@ the file where it lies: the Claude user copies it, within a few seconds and
 up to the size limit, to a place only root reaches, and the copy is what is
 checked. A good result is raised as the event `ha_claude_result` with `agent`, `count`,
 `verdict`, `text` and `time`. A file that fails a check is not raised, and
-its content is never written to the log.
+its content is never written to the log; the log line
+`result: <agent>: <reason>` names the check:
+
+| Reason | Meaning |
+|---|---|
+| `missing` | No result file |
+| `stale` | The file is older than the start of the run |
+| `unreadable` | The copy did not finish within a few seconds |
+| `too large` | Over 32 KiB |
+| `malformed (not json)` | The file is not JSON |
+| `malformed (shape)` | Not one JSON object with exactly the three fields |
+| `malformed (count)` | The count is not a plain whole number from 0 to 9999 |
+| `malformed (type)` | The verdict or the text is not a string |
+| `malformed (length)` | The verdict or the text is over its limit |
+| `malformed (other)` | The check itself could not run |
 
 This is the only way text Claude wrote leaves through the add-on's own
 code. What an agent
