@@ -36,6 +36,8 @@ options:
   morning_max_turns: 40
   run_timeout: 900
   run_max_turns: 60
+  morning_chat: true
+  chat_resume: false
 schema:
   session_name: str
   repo_url: str?
@@ -53,3 +55,5 @@ schema:
   morning_max_turns: int(1,200)
   run_timeout: int(60,3600)
   run_max_turns: int(1,200)
+  morning_chat: bool
+  chat_resume: bool

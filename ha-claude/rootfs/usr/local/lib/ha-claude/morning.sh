@@ -70,7 +70,7 @@ run_morning() {
 opening_prompt() {
   case "$1" in
     ok)
-      printf '%s' "The morning run has written today's handover file. Read it and present its summary and its open proposals to the owner."
+      printf '%s' "The morning run has written today's handover file. Read it and present its summary to the owner."
       ;;
     timeout)
       printf '%s' "The morning run took too long and was stopped. Tell the owner so in one sentence. Then read today's handover file if it exists and say what is in it."

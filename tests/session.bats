@@ -322,3 +322,223 @@ HOOKED='{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"x"}]}]}
   run _pane_runs_claude
   [ "$status" -ne 0 ]
 }
+
+@test "with chat_resume the chat starts with --continue" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  set_options '{"chat_resume":true}'
+  run chat_command
+  [ "${lines[${#lines[@]}-1]}" = "--continue" ]
+  # The Claude user cannot read the options; start_chat passes the option in.
+  rm "$HC_DATA/options.json"
+  HC_CHAT_RESUME=true run chat_command
+  [ "${lines[${#lines[@]}-1]}" = "--continue" ]
+}
+
+@test "without chat_resume the chat starts as today, without --continue" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  run chat_command
+  [[ "$output" != *"--continue"* ]]
+  set_options '{"chat_resume":false}'
+  run chat_command
+  [[ "$output" != *"--continue"* ]]
+  HC_CHAT_RESUME=false run chat_command
+  [[ "$output" != *"--continue"* ]]
+}
+
+@test "chat_resume defaults to false, a bool" {
+  f="$BATS_TEST_DIRNAME/../ha-claude/config.yaml"
+  grep -qx '  chat_resume: false' "$f"
+  grep -qx '  chat_resume: bool' "$f"
+}
+
+@test "an opening prompt is never combined with --continue" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  HC_CHAT_RESUME=true run chat_command "Present today's summary"
+  [[ "$output" != *"--continue"* ]]
+  [ "${lines[${#lines[@]}-1]}" = "Present today's summary" ]
+  export HC_CHAT_RESUME=true HC_OPENING_PROMPT="Present today's summary"
+  next_chat_argv
+  [[ "${CHAT_ARGV[*]}" != *"--continue"* ]]
+  [ "$CHAT_RESUMING" = 0 ]
+  # The starts after it in the same session continue that conversation.
+  next_chat_argv
+  [ "${CHAT_ARGV[${#CHAT_ARGV[@]}-1]}" = "--continue" ]
+  [ "$CHAT_RESUMING" = 1 ]
+}
+
+@test "start_chat hands chat_resume to the chat session, and a fresh start says so" {
+  load_lib options env session
+  set_options '{"chat_resume":true}'
+  as_claude() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/as_claude"; [[ "$*" != *has-session* ]]; }
+  restart_chat
+  grep -q -- "-e HC_CHAT_RESUME=true" "$BATS_TEST_TMPDIR/as_claude"
+  run grep -- "HC_CHAT_FRESH" "$BATS_TEST_TMPDIR/as_claude"
+  [ "$status" -eq 1 ]
+  : > "$BATS_TEST_TMPDIR/as_claude"
+  restart_chat "" fresh
+  grep -q -- "-e HC_CHAT_FRESH=1" "$BATS_TEST_TMPDIR/as_claude"
+  set_options '{}'
+  : > "$BATS_TEST_TMPDIR/as_claude"
+  start_chat
+  grep -q -- "-e HC_CHAT_RESUME=false" "$BATS_TEST_TMPDIR/as_claude"
+}
+
+@test "a fresh start is fresh once: the first argv has no --continue, the next has" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_CHAT_RESUME=true HC_CHAT_FRESH=1
+  next_chat_argv
+  [[ "${CHAT_ARGV[*]}" != *"--continue"* ]]
+  next_chat_argv
+  [ "${CHAT_ARGV[${#CHAT_ARGV[@]}-1]}" = "--continue" ]
+}
+
+@test "with chat_resume a clear that has to restart starts a new conversation, not the old one" {
+  load_lib options env session
+  export HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed"
+  set_options '{"chat_resume":true}'
+  chat_alive() { return 0; }
+  restart_chat() { echo "restart:${1:-}:${2:-}" >> "$BATS_TEST_TMPDIR/r"; }
+  # No SessionStart hook: the clear is a restart.
+  clear_chat
+  [ "$(cat "$BATS_TEST_TMPDIR/r")" = "restart::fresh" ]
+  # Claude Code not in the pane, and a clear the hook does not confirm.
+  managed "$HOOKED"
+  export HC_CLEAR_WAIT=1
+  sleep() { :; }
+  as_claude() { [[ "$*" == *display-message* ]] && echo /dev/pts/3; return 0; }
+  pgrep() { return 1; }
+  : > "$BATS_TEST_TMPDIR/r"
+  clear_chat
+  [ "$(cat "$BATS_TEST_TMPDIR/r")" = "restart::fresh" ]
+  pgrep() { echo 5151; }
+  : > "$BATS_TEST_TMPDIR/r"
+  clear_chat "hello"
+  [ "$(cat "$BATS_TEST_TMPDIR/r")" = "restart:hello:fresh" ]
+}
+
+@test "resume falls back to a fresh start, once, and that quick exit does not count towards the shell" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_CHAT_RESUME=true
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  # Continuing ended with an error within thirty seconds: nothing to continue.
+  chat_resume_failed 2 1
+  next_chat_argv
+  [[ "${CHAT_ARGV[*]}" != *"--continue"* ]]
+  [ "$CHAT_RESUMING" = 0 ]
+  # A fresh run that ends quickly is not a failed resume; it counts.
+  run chat_resume_failed 2 1
+  [ "$status" -ne 0 ]
+  # The start after it tries to continue again.
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  # A resumed run that lasted is not one either, nor a quick clean exit.
+  run chat_resume_failed 40 1
+  [ "$status" -ne 0 ]
+  run chat_resume_failed 2 0
+  [ "$status" -ne 0 ]
+  run chat_resume_failed x y
+  [ "$status" -eq 0 ]
+}
+
+@test "two resumed runs in a row that end with an error, however long, make the next start fresh" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_CHAT_RESUME=true
+  next_chat_argv
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  ! chat_resume_failed 400 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 0 ]
+  # A fresh start begins the count again.
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  ! chat_resume_failed 40 1
+  [ "$CHAT_RESUME_FAILS" = 1 ]
+  HC_CHAT_FRESH=1 next_chat_argv
+  [ "$CHAT_RESUMING" = 0 ]
+  ! chat_resume_failed 40 1
+  [ "$CHAT_RESUME_FAILS" = 0 ]
+  next_chat_argv
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+  # So does a resumed run that ends without an error.
+  [ "$CHAT_RESUME_FAILS" = 1 ]
+  ! chat_resume_failed 40 0
+  [ "$CHAT_RESUME_FAILS" = 0 ]
+  next_chat_argv
+  ! chat_resume_failed 40 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 1 ]
+}
+
+@test "how quick an exit is and how many failed resumes make a fresh start can be set" {
+  load_lib options session
+  mkdir -p "$HC_WORKSPACE"
+  export HC_CHAT_RESUME=true HC_CHAT_QUICK=5 HC_RESUME_TRIES=1
+  [ "$(chat_quick_exits 0 4)" = 1 ]
+  [ "$(chat_quick_exits 1 5)" = 0 ]
+  next_chat_argv
+  ! chat_resume_failed 6 1
+  next_chat_argv
+  [ "$CHAT_RESUMING" = 0 ]
+}
+
+@test "the chat loop gives up continuing after two slow failures, waiting before each start" {
+  STUB="$BATS_TEST_TMPDIR/stub"
+  mkdir -p "$STUB" "$HC_DATA/workspace/assistant" "$HC_DATA/home/.claude"
+  touch "$HC_DATA/home/.claude/.credentials.json"
+  printf '#!/usr/bin/env bash\necho "start $*" >> "%s/starts"\nexit 1\n' "$STUB" > "$STUB/claude"
+  chmod +x "$STUB/claude"
+  # No exit is quick here, so every run takes the normal path; the loop is
+  # ended after six waits.
+  {
+    printf 'slept=0\nsleep() { echo "sleep $*" >> "%s/starts"; slept=$((slept + 1)); (( slept < 6 )) || exit 0; }\n' "$STUB"
+    sed "s|^LIB=.*|LIB=$LIB|" "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-chat"
+  } > "$STUB/chat"
+  HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CHAT_RESUME=true HC_CHAT_QUICK=0 PATH="$STUB:$PATH" HOME="$BATS_TEST_TMPDIR" \
+    "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" 20 bash "$STUB/chat" \
+    </dev/null >"$BATS_TEST_TMPDIR/out" 2>&1
+  # Continue, continue, fresh, continue, continue, fresh, each followed by a wait.
+  [ "$(grep -c '^start' "$STUB/starts")" -eq 6 ]
+  [ "$(grep -c '^sleep 10$' "$STUB/starts")" -eq 6 ]
+  run bash -c "grep '^start' '$STUB/starts' | sed 's/.*--continue$/c/; s/^start.*/f/' | tr -d '\n'"
+  [ "$output" = "ccfccf" ]
+}
+
+@test "the chat loop starts fresh at once after a failed resume, and still leaves a shell after three quick fresh exits" {
+  STUB="$BATS_TEST_TMPDIR/stub"
+  mkdir -p "$STUB" "$HC_DATA/workspace/assistant" "$HC_DATA/home/.claude"
+  touch "$HC_DATA/home/.claude/.credentials.json"
+  # The stand-in exits at once and keeps one line per start.
+  printf '#!/usr/bin/env bash\necho "start $*" >> "%s/starts"\nexit 1\n' "$STUB" > "$STUB/claude"
+  chmod +x "$STUB/claude"
+  # The loop as shipped, with the libraries from here and a sleep that only
+  # writes down the wait.
+  {
+    printf 'sleep() { echo "sleep $*" >> "%s/starts"; }\n' "$STUB"
+    sed "s|^LIB=.*|LIB=$LIB|" "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-chat"
+  } > "$STUB/chat"
+  HC_MANAGED_DIR="$BATS_TEST_TMPDIR/managed" HC_CHAT_RESUME=true PATH="$STUB:$PATH" HOME="$BATS_TEST_TMPDIR" \
+    "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" 20 bash "$STUB/chat" \
+    </dev/null >"$BATS_TEST_TMPDIR/out" 2>&1
+  # Continue, fresh, wait, continue, fresh, wait, continue, fresh, shell.
+  [ "$(grep -c '^start' "$STUB/starts")" -eq 6 ]
+  [ "$(grep '^start' "$STUB/starts" | grep -c -- '--continue')" -eq 3 ]
+  [ "$(grep -c '^sleep 10$' "$STUB/starts")" -eq 2 ]
+  sed -n 1p "$STUB/starts" | grep -q -- '--continue'
+  run sed -n 2p "$STUB/starts"
+  [[ "$output" == start* && "$output" != *"--continue"* ]]
+  run sed -n 3p "$STUB/starts"
+  [ "$output" = "sleep 10" ]
+  grep -q "exited three times within 30 seconds" "$BATS_TEST_TMPDIR/out"
+}

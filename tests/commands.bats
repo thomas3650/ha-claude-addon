@@ -21,19 +21,19 @@ stub_actions() {
 }
 
 @test "ping reports ok" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   handle_command '"ping"'
   [ "$(cat "$CALLS")" = "outcome ping ok" ]
 }
 
 @test "sync syncs, installs the managed settings, restarts the chat and reports ok" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   handle_command 'sync'
   [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
 }
 
 @test "an unknown command is ignored and logged" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   run handle_command '"rm -rf /"'
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring unknown command"* ]]
@@ -41,7 +41,7 @@ stub_actions() {
 }
 
 @test "an empty or malformed line is ignored" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   run handle_command ''
   [ "$status" -eq 0 ]
   run handle_command '{"broken'
@@ -59,7 +59,7 @@ stub_actions() {
 }
 
 @test "a malformed command is ignored with a log line, an empty one silently" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   run handle_command '{"broken'
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring malformed command"* ]]
@@ -118,7 +118,7 @@ stub_actions() {
 }
 
 @test "morning runs the briefing, clears the chat with the summary's opening, and reports ok" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   handle_command 'morning'
   [ "$(sed -n 1p "$CALLS")" = "run" ]
   [ "$(sed -n 2p "$CALLS")" = "clear $(opening_prompt ok)" ]
@@ -126,15 +126,34 @@ stub_actions() {
 }
 
 @test "a failed morning run still clears the chat, which says so, and reports the outcome" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   MORNING_OUTCOME=timeout
   handle_command 'morning'
   [ "$(sed -n 2p "$CALLS")" = "clear $(opening_prompt timeout)" ]
   [ "$(sed -n 3p "$CALLS")" = "outcome morning timeout" ]
 }
 
+@test "with morning_chat true the morning run clears the chat as before" {
+  load_lib options morning commands; stub_actions
+  set_options '{"morning_chat":true}'
+  handle_command 'morning'
+  [ "$(cat "$CALLS")" = "run"$'\n'"clear $(opening_prompt ok)"$'\n'"outcome morning ok" ]
+}
+
+@test "with morning_chat false the morning run does not touch the chat, and still reports the outcome" {
+  load_lib options morning commands; stub_actions
+  set_options '{"morning_chat":false}'
+  as_claude() { echo "as_claude $*" >> "$CALLS"; }
+  handle_command 'morning'
+  [ "$(cat "$CALLS")" = $'run\noutcome morning ok' ]
+  : > "$CALLS"
+  MORNING_OUTCOME=timeout
+  handle_command 'morning'
+  [ "$(cat "$CALLS")" = $'run\noutcome morning timeout' ]
+}
+
 @test "without the agent the chat session is left alone" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   MORNING_OUTCOME=not_configured
   handle_command 'morning'
   [ "$(cat "$CALLS")" = $'run\noutcome morning not_configured' ]
@@ -174,7 +193,7 @@ EOT
 }
 
 @test "sync and restart-chat report failed when no chat session could be started" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   restart_chat() { echo "restart" >> "$CALLS"; return 1; }
   handle_command 'sync'
   handle_command 'restart-chat'
@@ -183,7 +202,7 @@ EOT
 }
 
 @test "a morning run keeps its outcome when the new chat session could not be started, and says so" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   clear_chat() { return 1; }
   run handle_command 'morning'
   [[ "$output" == *"no chat session"* ]]
@@ -191,7 +210,7 @@ EOT
 }
 
 @test "sync reports kept when the repo could not be fetched and the old working folder stays" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   sync_workspace() { HC_SYNC_RESULT=kept; }
   handle_command 'sync'
   [ "$(tail -1 "$CALLS")" = "outcome sync kept" ]
@@ -201,7 +220,7 @@ EOT
 }
 
 @test "report runs the report file, with the month when one is given, and reports the outcome" {
-  load_lib report commands; stub_actions
+  load_lib options report commands; stub_actions
   REPORT_OUTCOME=ok
   run_report() { echo "report${2:+ $2}" >> "$CALLS"; printf -v "$1" '%s' "$REPORT_OUTCOME"; }
   handle_command '"report"'
@@ -216,7 +235,7 @@ EOT
 }
 
 @test "an argument on a command that takes none makes it unknown" {
-  load_lib report commands; stub_actions
+  load_lib options report commands; stub_actions
   run handle_command '"sync now"'
   [ "$status" -eq 0 ]
   [[ "$output" == *"ignoring unknown command"* ]]
@@ -269,7 +288,7 @@ stub_run() {
 }
 
 @test "run starts the named agent, leaves the chat alone and reports the outcome with the agent" {
-  load_lib morning run commands; stub_actions; stub_run
+  load_lib options morning run commands; stub_actions; stub_run
   handle_command '"run house-check"'
   [ "$(cat "$CALLS")" = $'agent house-check\noutcome run ok house-check' ]
   : > "$CALLS"
@@ -281,7 +300,7 @@ stub_run() {
 }
 
 @test "run without a name is unknown" {
-  load_lib morning run commands; stub_actions; stub_run
+  load_lib options morning run commands; stub_actions; stub_run
   run handle_command '"run"'
   [[ "$output" == *"ignoring unknown command"* ]]
   run handle_command 'run'
@@ -349,7 +368,7 @@ EOT
 }
 
 @test "clear-chat clears the chat and reports the outcome" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   handle_command 'clear-chat'
   [ "$(cat "$CALLS")" = $'clear\noutcome clear-chat ok' ]
   clear_chat() { return 1; }
@@ -358,7 +377,7 @@ EOT
 }
 
 @test "clear-chat takes no opening from standard input" {
-  load_lib commands; stub_actions
+  load_lib options commands; stub_actions
   run handle_command 'clear-chat say something'
   [[ "$output" == *"ignoring"* ]]
   [ ! -s "$CALLS" ]
@@ -367,14 +386,56 @@ EOT
 }
 
 @test "a sync of the same commit clears the chat instead of restarting it, and reports ok" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
   handle_command 'sync'
   [ "$(cat "$CALLS")" = $'sync\nmanaged\nclear\noutcome sync ok' ]
 }
 
+@test "with chat_resume a sync with nothing new leaves the chat alone, and a sync with something new restarts it" {
+  load_lib options morning commands; stub_actions
+  set_options '{"chat_resume":true}'
+  chat_alive() { return 1; }
+  start_chat() { echo "start${1:+ $1}" >> "$CALLS"; }
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
+  handle_command 'sync'
+  # start_chat does nothing when the chat runs, and starts it when it does not.
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nstart\noutcome sync ok' ]
+  : > "$CALLS"
+  start_chat() { return 1; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
+  : > "$CALLS"
+  # Something new: a restart, without an opening, so the new instructions
+  # load and the chat loop continues the conversation (see session.bats).
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=ok; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
+}
+
+@test "with chat_resume a sync with nothing new restarts a chat whose pane no longer runs Claude Code" {
+  load_lib options morning commands; stub_actions
+  set_options '{"chat_resume":true}'
+  start_chat() { echo "start" >> "$CALLS"; }
+  sync_workspace() { echo "sync" >> "$CALLS"; HC_SYNC_RESULT=same; }
+  # The chat is stuck at a shell: after three quick exits, or not logged in.
+  chat_alive() { return 0; }
+  _pane_runs_claude() { return 1; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nrestart\noutcome sync ok' ]
+  : > "$CALLS"
+  restart_chat() { echo "restart" >> "$CALLS"; return 1; }
+  handle_command 'sync'
+  [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
+  : > "$CALLS"
+  # Claude Code runs: nothing is done to the chat.
+  _pane_runs_claude() { return 0; }
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'sync\nmanaged\nstart\noutcome sync ok' ]
+}
+
 @test "a sync of the same commit reports failed when the chat could not be cleared or started" {
-  load_lib morning commands; stub_actions
+  load_lib options morning commands; stub_actions
   sync_workspace() { HC_SYNC_RESULT=same; }
   clear_chat() { return 1; }
   handle_command 'sync'

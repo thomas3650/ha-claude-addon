@@ -141,6 +141,13 @@ EOT
   [ "$ok" != "$failed" ]
 }
 
+@test "the opening after an ok run asks for the summary only" {
+  load_lib options env morning
+  ok="$(opening_prompt ok)"
+  [[ "$ok" == *"summary"* ]]
+  [[ "$ok" != *"proposal"* ]]
+}
+
 @test "the morning run starts from a handover folder with nothing that reads as instructions" {
   load_lib options env retention morning
   stub_claude write

@@ -41,6 +41,8 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 | `run_timeout` | The longest a run started with the `run` command may take, in seconds |
 | `run_max_turns` | The most steps Claude may take in such a run |
+| `morning_chat` | On (the default): after the `morning` command the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
+| `chat_resume` | Off (the default): every start of the chat is a new conversation. On: the chat continues its last conversation after a `sync`, a `restart-chat` and a start of the add-on, so it is ended by `clear-chat`, `/clear` and the morning's opening. See "Keeping the conversation", which also covers the one case where a cleared conversation can come back |
 
 The add-on comes with GitHub's SSH host keys, so a server that answers for
 `github.com` with another key is refused. The key of any other host is
@@ -53,12 +55,13 @@ Send one of these with Home Assistant's add-on stdin action:
 | Command | Effect |
 |---|---|
 | `ping` | Raises the event `ha_claude_outcome` with outcome `ok` |
-| `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation") |
-| `restart-chat` | Ends the chat session and starts a new one |
+| `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation"). With `chat_resume` on, the new session continues the conversation, and a sync with nothing new leaves the chat alone (see "Keeping the conversation") |
+| `restart-chat` | Ends the chat session and starts a new one; with `chat_resume` on, the new one continues the conversation |
 | `clear-chat` | Starts a new conversation in the running chat session (see "A new conversation") |
-| `morning` | Runs the morning briefing, then starts a new conversation that presents the summary. See below |
+| `morning` | Runs the morning briefing, then, unless `morning_chat` is off, starts a new conversation that presents the summary. See below |
 | `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
+| `memory` | Writes the chat's memory to the add-on's log. See "The memory" |
 
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data. For `restart-chat` and `clear-chat` the outcome is
@@ -95,6 +98,42 @@ When the managed settings set `permissions.defaultMode`, the chat starts in
 that mode; otherwise it starts with `--permission-mode default`. The runs
 without a terminal always do.
 
+## Keeping the conversation
+
+By default every start of the chat is a new conversation: after `sync`,
+`restart-chat`, a start of the add-on, and when Claude Code has exited and
+the add-on starts it again. With the option `chat_resume` on, those starts
+continue the last conversation in the working folder instead
+(`claude --continue`), so the session in the Claude app keeps what was said
+and only these end it:
+
+- `clear-chat`, and `/clear` typed in the chat;
+- the `morning` command, when `morning_chat` is on: its opening belongs to
+  a new conversation, and a start with an opening never continues one;
+- a `clear-chat` or a `morning` whose clear has to be a restart (see "A new
+  conversation"): the restart is a new conversation too.
+
+Claude Code saves a conversation only once it has a message. After a clear
+with nothing typed since, the last saved conversation is the one before
+the clear, so a restart then may bring that one back.
+
+A `sync` that fetched something new restarts the chat, so Claude Code
+reads the new instructions, and continues the conversation. A `sync` with
+nothing new leaves the chat alone when Claude Code runs in it: nothing is
+sent to it. A chat that does not run is started, and one left at a shell
+(after three quick exits, or before the login) is restarted; both continue
+the conversation.
+
+The runs without a terminal are never continued: Claude Code skips them.
+When continuing ends with an error within thirty seconds, most likely
+because there was no conversation to continue, the add-on starts a new
+conversation at once, and that exit does not count towards the three quick
+exits after which the panel is left with a shell. A new conversation that
+also ends that quickly does count. When continuing ends with an error
+later, the add-on waits ten seconds as after any exit; after two such
+failures in a row the next start is a new conversation. Later starts try
+to continue again.
+
 ## The morning run
 
 On the command `morning` the add-on runs Claude Code once, without a
@@ -109,7 +148,9 @@ holds only allowed tools.
 
 When the run has ended, the add-on starts a new conversation (see "A new
 conversation"). It opens by presenting the day's summary, or by saying that
-the run did not finish. The outcome is one of:
+the run did not finish. With the option `morning_chat` off, the chat is
+left alone: the conversation in it goes on, and nothing is sent to it. The
+outcome is raised either way, and is one of:
 
 | Outcome | Meaning |
 |---|---|
@@ -250,6 +291,43 @@ print nothing personal. While it runs, the output is in
 `/data/state/report.out`, which only root can read and which is left out of
 backups; it is removed when the command has ended. No other command is
 handled while a report runs.
+
+## The memory
+
+Claude Code keeps a memory for each working folder in the Claude user's
+home, as Markdown files in its default project memory folder,
+`/data/home/.claude/projects/-data-workspace-assistant/memory/`. That
+folder is not in the config share or the working folder's repo. A memory
+moved elsewhere with the setting `autoMemoryDirectory` is not followed:
+the command reads the default folder only. On the
+command `memory` the add-on writes those files to its log, framed as the
+report is:
+
+```text
+[07:15:02] memory: begin
+[07:15:02] memory: | file: MEMORY.md
+[07:15:02] memory: | - [The boiler](boiler.md) is serviced in May
+[07:15:02] memory: | file: boiler.md
+[07:15:02] memory: | ...
+[07:15:02] memory: end, 4 lines
+[07:15:02] outcome: memory=ok
+```
+
+Each file `*.md` comes after a line with its name. At most 2000 lines are
+written, each cut at 500 characters; when there are more, the last line
+says `more left out`. Control characters are removed and empty lines are
+left out. The Claude user reads the files, with a time limit of 30
+seconds; a link, a file with more than one name (a hard link), a pipe or
+anything else that is not a plain file is passed over. The outcome is
+`ok`; `empty` when there is no memory folder or no memory file in it; or
+`failed` when the folder is reached through a link or is not a folder, the
+folder or a file in it cannot be read, the reading took too long, or it
+printed more than 1 MiB. A failed reading writes nothing of the memory to
+the log, only a line that says why.
+
+The log is kept by Home Assistant and shown in its UI, so this puts what
+Claude has remembered there. Send the command only when you mean to read
+it, and leave anything secret out of what Claude is asked to remember.
 
 ## Home Assistant for Claude
 

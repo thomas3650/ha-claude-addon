@@ -65,7 +65,22 @@ handle_command() {
       sync_workspace
       ensure_layout
       install_managed_settings
-      if [[ "${HC_SYNC_RESULT:-ok}" == same ]]; then
+      if [[ "${HC_SYNC_RESULT:-ok}" == same && "$(opt_bool '.chat_resume' false)" == true ]]; then
+        # Nothing new, and the conversation is kept: the chat is left alone
+        # when Claude Code runs in it, restarted (and so continued) when its
+        # pane is left at a shell, and started when it does not run.
+        local _sync_rc=0
+        if chat_alive && ! _pane_runs_claude; then
+          restart_chat || _sync_rc=$?
+        else
+          start_chat || _sync_rc=$?
+        fi
+        if (( _sync_rc == 0 )); then
+          raise_outcome sync ok
+        else
+          raise_outcome sync failed
+        fi
+      elif [[ "${HC_SYNC_RESULT:-ok}" == same ]]; then
         # Nothing new: a new conversation in the same session is enough.
         if clear_chat; then
           raise_outcome sync ok
@@ -96,11 +111,13 @@ handle_command() {
       ;;
     morning)
       # The run is waited for here: until it has ended, no other command is
-      # handled, so a second "morning" runs after the first one.
+      # handled, so a second "morning" runs after the first one. With the
+      # option morning_chat off, the chat is left alone.
       local outcome=failed
       log "commands: the morning run starts"
       run_morning outcome
-      if [[ "$outcome" != not_configured ]] && ! clear_chat "$(opening_prompt "$outcome")"; then
+      if [[ "$outcome" != not_configured && "$(opt_bool '.morning_chat' true)" == true ]] \
+         && ! clear_chat "$(opening_prompt "$outcome")"; then
         log "commands: there is no chat session to present the morning run"
       fi
       raise_outcome morning "$outcome"
@@ -111,6 +128,12 @@ handle_command() {
       local outcome=failed
       run_report outcome "$arg"
       raise_outcome report "$outcome"
+      ;;
+    memory)
+      # Waited for here, like the report.
+      local outcome=failed
+      run_memory outcome
+      raise_outcome memory "$outcome"
       ;;
     run)
       # Waited for here, like the morning run. The chat session is left
