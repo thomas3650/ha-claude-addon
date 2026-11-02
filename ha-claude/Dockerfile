@@ -1,12 +1,12 @@
 # Both base images are named by digest, so the same Dockerfile builds the
 # same image on any day. The weekly workflow moves them, with Claude Code.
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS node
+FROM node:22-bookworm-slim@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da AS node
 
-FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 
 ARG BUILD_VERSION=dev
 ARG BUILD_ARCH=unknown
-ARG CLAUDE_CODE_VERSION=2.1.296
+ARG CLAUDE_CODE_VERSION=2.1.316
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
