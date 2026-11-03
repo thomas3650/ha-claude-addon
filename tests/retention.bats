@@ -93,3 +93,21 @@ retention_setup() {
   [ "$(ls -A "$HC_RESULTS")" = "house-check.json" ]
 }
 
+@test "the notes folder is cleaned of what reads as instructions too, and its notes are kept" {
+  load_lib retention
+  mkdir -p "$HC_NOTES/.claude" "$HC_NOTES/club"
+  touch "$HC_NOTES/CLAUDE.md" "$HC_NOTES/.mcp.json" "$HC_NOTES/.claude/settings.json" \
+        "$HC_NOTES/club/CLAUDE.local.md" "$HC_NOTES/club/climbing.md" "$HC_NOTES/family.md"
+  run clean_handover
+  [[ "$output" == *"removed 4"* ]]
+  [ "$(cd "$HC_NOTES" && find . -mindepth 1 | sort | tr '\n' ' ')" = "./club ./club/climbing.md ./family.md " ]
+}
+
+@test "only the notes folder is cleaned in Claude's home, not the home itself" {
+  load_lib retention
+  mkdir -p "$HC_NOTES" "$HC_HOME/.claude"
+  touch "$HC_HOME/.claude/settings.json" "$HC_HOME/CLAUDE.md"
+  run clean_handover
+  [ -e "$HC_HOME/.claude/settings.json" ]
+  [ -e "$HC_HOME/CLAUDE.md" ]
+}

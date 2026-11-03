@@ -431,11 +431,12 @@ installed; the last good one stays, and the log says so.
 
 Outside its home Claude can write in two folders: the handover folder,
 `/data/handover`, and the results folder, `/data/results` (see "The result
-file"). Whether Claude Code lets it is for the working folder's settings to
+file"). In its home, `/data/home/notes` is a folder for notes Claude keeps
+itself. Whether Claude Code lets it is for the working folder's settings to
 say. Files named `YYYY-MM-DD.md` in the handover folder are deleted once
 their date is more than 30 days ago. Files that Claude Code could read as
 instructions or settings (`CLAUDE.md`, `CLAUDE.local.md`, `.claude`,
-`.mcp.json`, in any case and at any depth) are removed from both folders
-each time Claude Code is started, for the chat session, for a morning run
-or for a run started with `run`. When a session or a run starts, the log says so.
+`.mcp.json`, in any case and at any depth) are removed from those folders
+and from the notes folder each time Claude Code is started, for the chat
+session, for a morning run or for a run started with `run`. When a session or a run starts, the log says so.
 Nothing else in those folders is touched.
