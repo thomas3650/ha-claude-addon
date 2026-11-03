@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.14.0...v0.15.0) (2026-11-03)
+
+
+### Features
+
+* the notes folder in Claude's home is cleaned of instruction files too ([#51](https://github.com/thomas3650/ha-claude-addon/issues/51)) ([b18032d](https://github.com/thomas3650/ha-claude-addon/commit/b18032d565e8e672c1ef845051b095f4fc8a482b))
+
 ## [0.14.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.13.2...v0.14.0) (2026-11-01)
 
 
