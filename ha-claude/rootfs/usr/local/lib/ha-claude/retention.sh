@@ -31,11 +31,14 @@ prune_handover() {
 # root, a folder swapped for a link at the right moment could point the
 # removal at a file outside it.
 # The results folder is cleaned the same way: it is the Claude user's too.
+# So is the notes folder in Claude's home, where Claude keeps notes of its
+# own; the rest of the home, which holds Claude Code's own settings, is not.
 clean_handover() {
   local removed=0
   local -a runner=() dirs=()
   [[ -d "$HC_HANDOVER" ]] && dirs+=("$HC_HANDOVER")
   [[ -d "${HC_RESULTS:-}" ]] && dirs+=("$HC_RESULTS")
+  [[ -d "${HC_NOTES:-}" ]] && dirs+=("$HC_NOTES")
   (( ${#dirs[@]} )) || return 0
   if [[ "$(id -u)" == 0 ]] && declare -F as_claude >/dev/null; then
     runner=(as_claude)

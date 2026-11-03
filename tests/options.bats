@@ -27,6 +27,7 @@ load helpers
   load_lib
   [ "$HC_WORKSPACE" = "$HC_DATA/workspace/assistant" ]
   [ "$HC_HANDOVER" = "$HC_DATA/handover" ]
+  [ "$HC_NOTES" = "$HC_DATA/home/notes" ]
 }
 
 @test "the extra_mcp schema accepts a name=upstream entry and refuses characters nginx or sed would read" {
