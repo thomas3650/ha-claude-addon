@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.15.0...v0.15.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* Claude can read PDF files ([#54](https://github.com/thomas3650/ha-claude-addon/issues/54)) ([fa1095a](https://github.com/thomas3650/ha-claude-addon/commit/fa1095a6ad2a659b38eab70da1c0ce65c9631fae))
+
 ## [0.15.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.14.0...v0.15.0) (2026-11-03)
 
 
