@@ -12,9 +12,10 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq nginx-light openssh-client procps tmux ttyd tzdata util-linux \
+      ca-certificates curl git jq nginx-light openssh-client poppler-utils procps tmux ttyd tzdata util-linux \
  && rm -rf /var/lib/apt/lists/* /etc/nginx/sites-enabled/default \
- && ttyd --version
+ && ttyd --version \
+ && command -v pdftoppm
 
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
