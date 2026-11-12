@@ -214,6 +214,12 @@ sleep 2
 [[ "$(docker exec "$name" curl -s -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:7681/claude/)" == 403 ]] || fail "with the Supervisor-only line a terminal still answered another address"
 [[ "$(code http://127.0.0.1:7684/mcp)" == 405 ]] || fail "the listener stopped answering when the panel got its Supervisor-only line"
 
+# Claude Code reads a PDF by rendering its pages with pdftoppm: the Claude
+# user can turn a one-page PDF into an image.
+docker exec -u claude "$name" sh -c 'd="$(mktemp -d)" && cd "$d" \
+  && printf "%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 72 72]>>endobj\ntrailer<</Root 1 0 R>>\n%%%%EOF\n" > t.pdf \
+  && pdftoppm -png -r 20 t.pdf page && ls page*.png' >/dev/null 2>&1 || fail "pdftoppm cannot render a PDF, so Claude cannot read one"
+
 docker rm -f "$name" >/dev/null
 
 # What the listener sends on: a second container whose upstream is a
