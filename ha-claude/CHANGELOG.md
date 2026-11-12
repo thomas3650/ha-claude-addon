@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/thomas3650/ha-claude-addon/compare/v0.15.1...v0.15.2) (2026-11-12)
+
+
+### Bug Fixes
+
+* Claude Code 2.1.319 and this week's base images ([#53](https://github.com/thomas3650/ha-claude-addon/issues/53)) ([e5664bc](https://github.com/thomas3650/ha-claude-addon/commit/e5664bc3ec17db85afbcc2269bb05346dbcbdf2b))
+
 ## [0.15.1](https://github.com/thomas3650/ha-claude-addon/compare/v0.15.0...v0.15.1) (2026-11-12)
 
 
