@@ -77,3 +77,9 @@ valid() { python3 "$VALIDATE" "$1" "$2"; }
       || { echo "$f: gave $(_result_reason "$BATS_TEST_TMPDIR/err")"; false; }
   done
 }
+
+@test "HC_SCHEMAS defaults to where the Dockerfile copies the schemas" {
+  load_lib
+  [ "$HC_SCHEMAS" = /usr/share/ha-claude/schemas ]
+  grep -qF "COPY schemas/ $HC_SCHEMAS/" "$BATS_TEST_DIRNAME/../ha-claude/Dockerfile"
+}
