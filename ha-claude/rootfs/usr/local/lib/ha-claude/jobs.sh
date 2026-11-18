@@ -238,10 +238,21 @@ job_next() {
 #                   run), finding (the result's verdict) and text
 #   <name>.pid      the runner's PID while a run is on
 #   <name>.started  made when the run starts; the result must not be older
+#   <name>.limit    the run's time limit, in seconds, for sync's wait
 #   seen/<name>     the day the add-on first saw the job (below)
 # Its run's output goes to HC_STATE/job-<name>.log, and the prompt and the
 # copies of the result being checked are HC_STATE/job-<name>.*: all for
-# root only. Nothing of a job touches the handover.
+# root only. A chat's job touches nothing of the handover; a file from the
+# repo may ask for it (its context).
+#
+# Every job runs here, a chat's job and a file from the repo alike: the
+# file's agent, with the file's limits and a first message built from the
+# file (job_first_message), its result checked, and the file's after steps
+# done (job_after). What differs by origin is where the result goes and
+# what is done with it: a chat's job writes HC_JOB_RESULTS/<name>.json and
+# its finding stays with the job; a file from the repo writes
+# HC_RESULTS/<agent>.json, raised as ha_claude_result, and its outcome is
+# raised as ha_claude_outcome.
 : "${HC_CLAUDE_BIN:=claude}"
 : "${HC_JOB_RESULT_BYTES:=32768}"
 
@@ -283,7 +294,7 @@ _job_update() {
 _job_forget() {
   local name="$1" dir="${HC_JOB_STATE:?}"
   job_name_ok "$name" || return 0
-  rm -f -- "$dir/$name.json" "$dir/$name.pid" "$dir/$name.started"
+  rm -f -- "$dir/$name.json" "$dir/$name.pid" "$dir/$name.started" "$dir/$name.limit"
   jobs_on_change "$name"
 }
 
@@ -321,7 +332,7 @@ _jobs_reap() {
       log "jobs: $name: the run was lost"
       _job_update "$name" '.status = "failed" | .error = "lost" | .notify_rose = false'
     fi
-    rm -f -- "$pidfile"
+    rm -f -- "$pidfile" "$HC_JOB_STATE/$name.limit"
   done
 }
 
@@ -340,11 +351,14 @@ jobs_startup() {
     fi
   done
   # The listener is gone with the old container too, and so is any holder of
-  # the publishing lock.
+  # the publishing lock or of the placing's lock, and every run's scratch.
+  # A clearing request (after/) is kept: the start carries it out.
   rm -rf -- "$state/mqtt-listen.pid" "$state/mqtt.lock.d" "$state"/job-mqtt.* "$state"/job-calls.* \
-        "$state"/job-notify.* "$state"/job-switch.* "$state"/job-count.*
-  rm -f -- "$dir"/*.pid "$dir"/*.started "$dir"/*.tmp \
-        "$state"/job-*.prompt "$state"/job-*.in "$state"/job-*.err "$state"/job-*.body "$state"/job.in
+        "$state"/job-notify.* "$state"/job-switch.* "$state"/job-count.* "$state"/job-fixed.* \
+        "${HC_FIXED_LOCK:-$state/fixed.lock}.d"
+  rm -f -- "$dir"/*.pid "$dir"/*.started "$dir"/*.limit "$dir"/*.tmp \
+        "$state"/job-*.prompt "$state"/job-*.in "$state"/job-*.err "$state"/job-*.body "$state"/job.in \
+        "$state"/fixed-*.started "$state"/result-* "$state"/run-*.started "$state"/after/.*.tmp
 }
 
 # _job_kill_tree <pid> - stops a process and everything it started, the
@@ -370,15 +384,29 @@ jobs_stop() {
   return 0
 }
 
+# jobs_wait_cap - prints how long sync waits for the running jobs at most:
+# the largest time limit among them, plus 90 seconds; 0 when none runs. A
+# run whose limit is not known counts with job_timeout.
+jobs_wait_cap() {
+  local name limit max=-1
+  while read -r name; do
+    [[ -n "$name" ]] || continue
+    limit="$(cat "$HC_JOB_STATE/$name.limit" 2>/dev/null)"
+    [[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit="$(_morning_number '.job_timeout' 1800)"
+    (( limit > max )) && max="$limit"
+  done < <(jobs_running)
+  if (( max < 0 )); then echo 0; else echo "$((max + 90))"; fi
+}
+
 # jobs_wait_idle - returns when no job runs, for sync. A run ends by its own
-# time limit; the wait gives up a little after it, in case a runner hangs
-# after its run. Short waits in the background, so a stop signal is handled
-# at once.
+# time limit; the wait gives up a little after the largest (jobs_wait_cap),
+# in case a runner hangs after its run. Short waits in the background, so a
+# stop signal is handled at once.
 jobs_wait_idle() {
   local cap waited=0 running
-  cap=$(( $(_morning_number '.job_timeout' 1800) + 90 ))
   running="$(jobs_running)"
   [[ -n "$running" ]] || return 0
+  cap="$(jobs_wait_cap)"
   log "jobs: waiting for $(wc -l <<<"$running" | tr -d ' ') running job(s)"
   while [[ -n "$(jobs_running)" ]]; do
     if (( waited >= cap )); then
@@ -423,43 +451,152 @@ _job_result() {
   return "$rc"
 }
 
-# _job_prompt <job-json> - the run's first message: the date, the job's name,
-# its result file, the condition under which the owner is told, and the task.
-_job_prompt() {
+# job_first_message <name> <job-json> - the run's first message, one form
+# for every job: "Today is <date>. Your result file is <path>. Do your run."
+# A file from the repo goes on with a line for each of its context lines, in
+# its order (handover: today's handover file; jobs: the Jobs line, when a
+# chat's job has a result), and its task as "Extra task from the owner:". A
+# chat's job goes on as before: the condition under which the owner is
+# told, and its task.
+job_first_message() {
+  local name="$1" job="$2" today line jobs
+  today="$(date +%F)"
+  if declare -F fixed_is >/dev/null && fixed_is "$name"; then
+    # shellcheck disable=SC2016  # jq's variables, not the shell's
+    jq -j --arg today "$today" --arg dir "$HC_RESULTS" \
+      '"Today is \($today). Your result file is \($dir)/\(.agent).json. Do your run."' <<<"$job"
+    while read -r line; do
+      case "$line" in
+        handover) printf "\nToday's handover file is %s/%s.md." "$HC_HANDOVER" "$today" ;;
+        jobs) jobs="$(_morning_jobs)"; [[ -n "$jobs" ]] && printf '\n%s' "$jobs" ;;
+      esac
+    done < <(jq -r '(.context // [])[]' <<<"$job")
+    # The task on standard output only, never on a command line.
+    jq -j 'if (.task | type) == "string" then "\nExtra task from the owner: \(.task)" else "" end' <<<"$job"
+    printf '\n'
+    return 0
+  fi
   # shellcheck disable=SC2016  # jq's variables, not the shell's
-  jq -r --arg today "$(date +%F)" --arg dir "$HC_JOB_RESULTS" '
-    "Today is \($today). You run the job \(.name) once. Your result file is \($dir)/\(.name).json."
+  jq -r --arg today "$today" --arg dir "$HC_JOB_RESULTS" '
+    "Today is \($today). Your result file is \($dir)/\(.name).json. Do your run."
     + (if .notify then " Set notify to true only when this holds: \(.notify)" else "" end)
     + "\n\nThe task:\n\n\(.task)"
-  ' <<<"$1"
+  ' <<<"$job"
 }
 
-# _job_run <name> <job-json> <agent> - one run, in the background: Claude
-# Code once, without a terminal, as the job's agent, from the working
-# folder, with a time limit and a turn limit and with automatic memory off.
-# The prompt comes on standard input from a file only root can read, so the
-# task is on no command line. The run is marked as unattended for the gate
-# (HA_CLAUDE_UNATTENDED holds the agent), and as the job (HA_CLAUDE_JOB).
-# Afterwards the runner checks the result and writes how the run ended.
+# job_outcome_command <name> - the command a file from the repo's outcome
+# is raised as: morning for the file the option morning_job names, run for
+# any other.
+job_outcome_command() {
+  local morning
+  morning="$(opt '.morning_job' '')"
+  if [[ -n "$morning" && "$morning" == "$1" ]]; then echo morning; else echo run; fi
+}
+
+# job_after <name> <outcome> <by> <job-json> - a file from the repo's after
+# steps, at the end of its run, and its outcome. With clear_chat the chat's
+# session is cleared, which the command loop also handles, so the runner
+# never does it: it writes a request in HC_STATE/after/<name>, which only
+# root can read, "clear the chat, then raise this outcome", and returns
+# without waiting for it (jobs_after_run carries it out). Without, the
+# outcome is raised at once. A request that cannot be written is logged,
+# and the outcome raised without the clearing.
+job_after() {
+  local name="$1" outcome="$2" by="$3" job="$4" command agent dir="$HC_STATE/after"
+  command="$(job_outcome_command "$name")"
+  agent="$(jq -r '.agent' <<<"$job")"
+  if jq -e '(.after // []) | index("clear_chat")' <<<"$job" >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # jq's variables, not the shell's
+    if ( umask 077; mkdir -p "$dir" && chmod 700 "$dir" \
+           && jq -nc --arg c "$command" --arg o "$outcome" --arg a "$agent" --arg b "$by" \
+                '{command: $c, outcome: $o, agent: $a, by: $b}' > "$dir/.$name.tmp" \
+           && mv -f -- "$dir/.$name.tmp" "$dir/$name" ) 2>/dev/null; then
+      log "jobs: $name: the chat is cleared next"
+      return 0
+    fi
+    rm -f -- "$dir/.$name.tmp"
+    log "jobs: $name: the request to clear the chat could not be written"
+  fi
+  raise_outcome "$command" "$outcome" "$agent" "$by"
+}
+
+# jobs_after_run - carries out the requests the runner left (job_after):
+# with the option morning_chat on, and not after not_configured, the chat
+# is cleared with the opening for the outcome; then the outcome is raised,
+# and the request removed. Called by the command loop on every pass, after
+# each command, and at the start for a request a restart left. A request
+# that is not one is removed and logged.
+jobs_after_run() {
+  local file name req command outcome agent by
+  for file in "$HC_STATE"/after/*; do
+    [[ -e "$file" || -L "$file" ]] || continue
+    name="${file##*/}"
+    req=""
+    if job_name_ok "$name" && [[ -f "$file" && ! -L "$file" ]]; then
+      req="$(jq -r 'select(type == "object"
+                    and (.command | IN("morning", "run"))
+                    and (.outcome | IN("ok", "failed", "timeout", "not_configured"))
+                    and (.by | IN("jobs", "command"))
+                    and (.agent | type == "string" and test("^[a-z][a-z0-9-]{0,31}$")))
+                  | "\(.command) \(.outcome) \(.agent) \(.by)"' "$file" 2>/dev/null)" || req=""
+    fi
+    if [[ -z "$req" ]]; then
+      log "jobs: a request to clear the chat is not one; it is removed"
+      rm -f -- "$file"
+      continue
+    fi
+    read -r command outcome agent by <<<"$req"
+    if [[ "$outcome" != not_configured && "$(opt_bool '.morning_chat' true)" == true ]] \
+       && ! clear_chat "$(opening_prompt "$outcome")"; then
+      log "jobs: $name: there is no chat session to present the run"
+    fi
+    raise_outcome "$command" "$outcome" "$agent" "$by"
+    rm -f -- "$file"
+  done
+  return 0
+}
+
+# _job_run <name> <job-json> <agent> <repo> <by> <limit> <turns> <today> <mark>
+# - one run, in the background: Claude Code once, without a terminal, as the
+# job's agent, from the working folder, with a time limit and a turn limit
+# and with automatic memory off. The first message comes on standard input
+# from a file only root can read, so the task is on no command line. The run
+# is marked as unattended for the gate (HA_CLAUDE_UNATTENDED holds the
+# agent), and, when mark is yes, as the job (HA_CLAUDE_JOB). <repo> is true
+# for a file from the repo; <today> the day the run started. Afterwards the
+# runner checks the result, writes how the run ended and, for a file from
+# the repo, does its after steps.
 _job_run() {
-  local name="$1" job="$2" agent="$3" limit turns rc=0 status next started=$SECONDS
+  local name="$1" job="$2" agent="$3" repo="$4" by="$5" limit="$6" turns="$7" today="$8"
+  local rc=0 status next started=$SECONDS kept handover
   local body="$HC_STATE/job-$1.body"
   local prompt="$HC_STATE/job-$1.prompt" marker="$HC_JOB_STATE/$1.started" out="$HC_STATE/job-$1.log"
-  limit="$(_morning_number '.job_timeout' 1800)"
-  turns="$(_morning_number '.job_max_turns' 60)"
+  local -a mark=()
+  [[ "$9" == yes ]] && mark=(HA_CLAUDE_JOB="$name")
   ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-      HA_CLAUDE_UNATTENDED="$agent" HA_CLAUDE_JOB="$name" \
+      HA_CLAUDE_UNATTENDED="$agent" ${mark[@]+"${mark[@]}"} \
       "$HC_LIMIT_BIN" "$limit" "$HC_CLAUDE_BIN" -p \
       --agent "$agent" --max-turns "$turns" --permission-mode default \
       --no-session-persistence \
   ) <"$prompt" >>"$out" 2>&1 || rc=$?
   rm -f -- "$prompt"
+  kept="$HC_STATE/fixed-$agent.body"
+  handover="$HC_HANDOVER/$today.md"
   if (( rc == 124 )); then
     status=timeout
-  elif (( rc == 0 )) && _job_result "$name" "$marker"; then
-    status=ok
-  else
+  elif (( rc != 0 )); then
     status=failed
+  elif [[ "$repo" != true ]]; then
+    if _job_result "$name" "$marker"; then status=ok; else status=failed; fi
+  # A file from the repo whose context names the handover must have written
+  # today's handover file since it started, and its result as well.
+  elif jq -e '(.context // []) | index("handover")' <<<"$job" >/dev/null 2>&1 \
+       && ! [[ -s "$handover" && ! "$handover" -ot "$marker" ]]; then
+    log "jobs: $name: today's handover file was not written"
+    status=failed
+  else
+    rm -f -- "$kept"
+    if publish_result "$agent" "$marker"; then status=ok; else status=failed; fi
   fi
   log "jobs: $name ended $status after $((SECONDS - started)) seconds"
   # The next run counts from this one's start, which the state already
@@ -469,7 +606,21 @@ _job_run() {
   # The result is read by jq from its file: the text Claude wrote goes on
   # no command line.
   # shellcheck disable=SC2016  # jq's variables, not the shell's
-  if [[ "$status" == ok ]]; then
+  if [[ "$status" == ok && "$repo" == true ]]; then
+    # The finding is the kept body's, written by this run; when there is
+    # none, the finding is empty rather than the last run's. notify is not
+    # for a file from the repo.
+    if ! [[ -f "$kept" && ! -L "$kept" && ! "$kept" -ot "$marker" ]]; then
+      rm -f -- "$kept"
+      ( umask 077; echo '{}' > "$kept" )
+    fi
+    _job_update "$name" '($b[0] // {}) as $r
+      | .status = "ok" | .error = null | .last_end = $now | .notify_rose = false
+      | .finding = ($r.verdict | if type == "string" then . else null end)
+      | .text = ($r.text | if type == "string" then . else null end) | .next_run = $next' \
+      --slurpfile b "$kept" --argjson now "$(date +%s)" --argjson next "$next"
+    rm -f -- "$kept"
+  elif [[ "$status" == ok ]]; then
     _job_update "$name" '$b[0] as $r | (.notify // false) as $was
       | .status = "ok" | .error = null | .last_end = $now
       | .notify_rose = ($r.notify and ($was | not)) | .notify = $r.notify
@@ -481,13 +632,20 @@ _job_run() {
       --arg s "$status" --argjson now "$(date +%s)" --argjson next "$next"
   fi
   rm -f -- "$marker" "$body"
+  [[ "$repo" == true ]] && job_after "$name" "$status" "$by" "$job"
+  return 0
 }
 
-# _job_start <name> <job-json> <now> - starts one run in the background, as
-# the job's agent. Returns 1, with the job failed, when the agent has no
-# file.
+# _job_start <name> <job-json> <now> [by] - starts one run in the
+# background, as the job's agent; by is jobs (the tick, the default) or
+# command. Returns 1, with the job failed, when the agent has no file. A
+# file from the repo has its own timeout and max_turns, or the options
+# run_timeout and run_max_turns; a chat's job has job_timeout and
+# job_max_turns. A file from the repo starts without the last result of its
+# agent, as the run command's agents do, and with the handover folder made
+# clean; a chat's job keeps its last result, which its agent reads first.
 _job_start() {
-  local name="$1" job="$2" now="$3" agent file
+  local name="$1" job="$2" now="$3" by="${4:-jobs}" agent file repo=false limit turns marked=yes today
   agent="$(jq -r '.agent' <<<"$job")"
   if ! job_name_ok "$agent"; then
     log "jobs: $name: the agent is not a name"
@@ -504,21 +662,65 @@ _job_start() {
       --argjson now "$now"
     return 1
   fi
-  ( umask 077; _job_prompt "$job" > "$HC_STATE/job-$name.prompt" )
-  # In the results folder, which is the Claude user's: as that user. The
-  # last result stays: the agent reads it first, to compare. Only a result
-  # written after this mark counts as this run's.
-  as_claude mkdir -p -- "$HC_JOB_RESULTS" </dev/null >/dev/null 2>&1 || true
+  declare -F fixed_is >/dev/null && fixed_is "$name" && repo=true
+  if [[ "$repo" == true ]]; then
+    limit="$(jq -r '.timeout // empty' <<<"$job")"
+    [[ "$limit" =~ ^[0-9]+$ ]] || limit="$(_morning_number '.run_timeout' 900)"
+    turns="$(jq -r '.max_turns // empty' <<<"$job")"
+    [[ "$turns" =~ ^[0-9]+$ ]] || turns="$(_morning_number '.run_max_turns' 60)"
+    # The tool calls are marked with the job only when the policy asks.
+    if ! declare -F fixed_marked >/dev/null || ! fixed_marked "$name"; then marked=no; fi
+  else
+    limit="$(_morning_number '.job_timeout' 1800)"
+    turns="$(_morning_number '.job_max_turns' 60)"
+  fi
+  today="$(date +%F)"
+  ( umask 077; job_first_message "$name" "$job" > "$HC_STATE/job-$name.prompt" )
+  if [[ "$repo" == true ]]; then
+    declare -F clean_handover >/dev/null && clean_handover
+    clear_result "$agent"
+  else
+    # In the results folder, which is the Claude user's: as that user. The
+    # last result stays: the agent reads it first, to compare. Only a result
+    # written after this mark counts as this run's.
+    as_claude mkdir -p -- "$HC_JOB_RESULTS" </dev/null >/dev/null 2>&1 || true
+  fi
   : > "$HC_JOB_STATE/$name.started"
+  ( umask 077; printf '%s\n' "$limit" > "$HC_JOB_STATE/$name.limit" )
   rm -f -- "$HC_STATE/job-$name.log"
   ( umask 077; : > "$HC_STATE/job-$name.log" )
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   _job_update "$name" '.status = "running" | .error = null | .last_run = $now | .next_run = null
       | .notify_rose = false' \
     --argjson now "$now"
-  _job_run "$name" "$job" "$agent" &
+  _job_run "$name" "$job" "$agent" "$repo" "$by" "$limit" "$turns" "$today" "$marked" &
   printf '%s\n' "$!" > "$HC_JOB_STATE/$name.pid"
   log "jobs: $name started as $agent"
+}
+
+# job_command <name> - the run a command asks for of a file from the repo
+# (morning, run <name>): started now in the runner, whatever the file's
+# enabled says, and not waited for. When it runs already, nothing starts and
+# the outcome is running; when the placed file is not valid, failed. The
+# outcome then is raised at once, so the script that sent the command does
+# not wait the run's whole limit.
+job_command() {
+  local name="$1" command copy="$HC_STATE/job-command.in" job
+  command="$(job_outcome_command "$name")"
+  if [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name"; then
+    log "jobs: $name runs already; it is not started again"
+    raise_outcome "$command" running "$name" command
+    return 0
+  fi
+  if ! job_read "$name" "$copy" || ! job="$(fixed_check "$name" "$copy")"; then
+    rm -f -- "$copy"
+    log "jobs: $name is not valid; it is not run"
+    raise_outcome "$command" failed "$name" command
+    return 0
+  fi
+  rm -f -- "$copy"
+  _job_start "$name" "$job" "$(date +%s)" command || raise_outcome "$command" failed "$name" command
+  return 0
 }
 
 # _job_end <name> - moves an ended job's file to ended/, where the chat can
@@ -609,8 +811,10 @@ _job_last_day() {
 # _jobs_tick_fixed <name> <now> <copy> - checks a fixed job's placed file
 # against the working folder's and writes its state: idle unless it has a
 # status of its own (ok, failed, timeout, running), invalid with the word
-# fixed_check gave, and its next run. It is never started here: its run is
-# another's, and it does not end.
+# fixed_check gave, and its next run. A file with run_by jobs that is due is
+# started, whatever the places and whether or not Home Assistant can see
+# the jobs; one with run_by automation is another's to start. It does not
+# end.
 # shellcheck disable=SC2016  # jq's variables, not the shell's
 _jobs_tick_fixed() {
   local name="$1" now="$2" copy="$3" state job
@@ -627,6 +831,9 @@ _jobs_tick_fixed() {
   _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
     | .error = (if .status == "idle" or .status == "ok" then null else .error end)
     | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
+  if [[ "$(jq -r '.run_by' <<<"$job")" == jobs ]] && job_due "$job" "$(_job_state "$name")" "$now"; then
+    _job_start "$name" "$job" "$now" jobs || true
+  fi
 }
 
 # jobs_tick - reads the job files, checks them, writes each job's state,
@@ -652,8 +859,9 @@ jobs_tick() {
     [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name" && continue
     _job_forget "$name"
   done
-  # The fixed jobs first: they are checked and shown, never started here,
-  # and do not count towards the limit of enabled jobs.
+  # The files from the repo first: they are checked and shown, and the due
+  # ones with run_by jobs start before any place is counted; they do not
+  # count towards the limit of enabled jobs.
   if declare -F fixed_list >/dev/null; then
     while read -r name; do
       [[ -n "$name" ]] || continue
@@ -703,7 +911,8 @@ jobs_tick() {
   rm -f -- "$copy"
   _jobs_prune_seen "$today"
   # The files are checked and their state kept either way; without a way to
-  # show them in Home Assistant, none runs.
+  # show them in Home Assistant, none of the chat's jobs runs. The places
+  # left are counted with every run that is on, a file from the repo's too.
   jobs_can_run || return 0
   parallel="$(_morning_number '.jobs_parallel' 3)"
   (( parallel >= 1 )) || parallel=1

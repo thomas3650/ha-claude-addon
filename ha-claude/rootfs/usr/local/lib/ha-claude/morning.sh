@@ -1,15 +1,7 @@
-# The morning run: Claude Code once, without a terminal, as the agent
-# "morning-briefing" from the working folder, with a turn limit and a time
-# limit and with automatic memory off. The add-on does not read what the run
-# produces; it only checks that today's handover file was written. The run is
-# marked as unattended in its environment, as the run command's agents are.
-: "${HC_CLAUDE_BIN:=claude}"
-: "${HC_LIMIT_BIN:=/usr/local/bin/ha-claude-limit}"
-HC_MORNING_AGENT=morning-briefing
-
-morning_configured() {
-  [[ -f "$HC_WORKSPACE/.claude/agents/$HC_MORNING_AGENT.md" ]]
-}
+# What the add-on gives the runs of the job files beyond the runner itself
+# (jobs.sh): the options' numbers, the Jobs line a run's context may ask
+# for, and the chat's opening after a run whose file asks for the chat to be
+# cleared. Nothing here names an agent.
 
 # Prints a whole number option, or the default when it is missing or not a
 # whole number.
@@ -23,7 +15,7 @@ _morning_number() {
 # _morning_jobs - prints one line naming the jobs that have a result file,
 # "Jobs: a, b (old)", or nothing when none has. A result is old when it is
 # from before the job's last run, or the job is off. Names only: nothing of
-# what a job file or a result holds goes into the prompt. A result file is
+# what a chat's job file or a result holds goes into the line. A result file is
 # only looked at, never opened; the job file is read through the copy the
 # Claude user makes.
 _morning_jobs() {
@@ -54,59 +46,9 @@ _morning_jobs() {
   printf 'Jobs: %s' "${items[*]}" | sed 's/,/, /g'
 }
 
-# run_morning <variable> - runs the morning briefing and stores its outcome
-# in the named variable as one word: ok, failed, timeout or not_configured.
-# The outcome is not printed: a caller that captured it would hold back a
-# stop signal until the run had ended. The run's output can hold what the
-# agent read, so it goes to a file only root can read, not to the log.
-run_morning() {
-  local _rm_today _rm_file _rm_limit _rm_turns _rm_rc=0 _rm_started=$SECONDS _rm_prompt _rm_jobs _rm_job=()
-  local _rm_marker="$HC_STATE/morning.started"
-  if ! morning_configured; then
-    printf -v "$1" '%s' not_configured
-    return 0
-  fi
-  _rm_today="$(date +%F)"
-  _rm_file="$HC_HANDOVER/$_rm_today.md"
-  _rm_limit="$(_morning_number '.morning_timeout' 900)"
-  _rm_turns="$(_morning_number '.morning_max_turns' 40)"
-  _rm_prompt="Today is $_rm_today. Today's handover file is $_rm_file. Do your morning run."
-  _rm_jobs="$(_morning_jobs)"
-  [[ -n "$_rm_jobs" ]] && _rm_prompt+=$'\n'"$_rm_jobs"
-  mkdir -p "$HC_STATE"
-  declare -F clean_handover >/dev/null && clean_handover
-  declare -F clear_result >/dev/null && clear_result "$HC_MORNING_AGENT"
-  : > "$_rm_marker"
-  rm -f "$HC_STATE/morning.log"
-  ( umask 077; : > "$HC_STATE/morning.log" )
-  if declare -F fixed_marked >/dev/null && fixed_marked "$HC_MORNING_AGENT"; then
-    _rm_job=(HA_CLAUDE_JOB="$HC_MORNING_AGENT")
-  fi
-  ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-      HA_CLAUDE_UNATTENDED="$HC_MORNING_AGENT" ${_rm_job[@]+"${_rm_job[@]}"} \
-      "$HC_LIMIT_BIN" "$_rm_limit" "$HC_CLAUDE_BIN" \
-      -p "$_rm_prompt" \
-      --agent "$HC_MORNING_AGENT" --max-turns "$_rm_turns" --permission-mode default \
-      --no-session-persistence \
-  ) </dev/null >>"$HC_STATE/morning.log" 2>&1 &
-  wait $! || _rm_rc=$?
-  log "morning: the run ended with status $_rm_rc after $((SECONDS - _rm_started)) seconds"
-  if (( _rm_rc == 124 )); then
-    printf -v "$1" '%s' timeout
-  elif (( _rm_rc == 0 )) && [[ -s "$_rm_file" && ! "$_rm_file" -ot "$_rm_marker" ]]; then
-    printf -v "$1" '%s' ok
-    # The run may leave a short result beside its handover file. It is
-    # raised when it is there and good; the outcome does not depend on it.
-    if declare -F publish_result >/dev/null && [[ -e "$HC_RESULTS/$HC_MORNING_AGENT.json" ]]; then
-      publish_result "$HC_MORNING_AGENT" "$_rm_marker" || true
-    fi
-  else
-    printf -v "$1" '%s' failed
-  fi
-}
-
-# The first message of the chat session that follows a morning run. Fixed
-# text only: nothing the run read or wrote is put here.
+# The first message of the chat session that follows a run whose file has
+# the after step clear_chat (the morning run). Fixed text only: nothing the
+# run read or wrote is put here.
 opening_prompt() {
   case "$1" in
     ok)

@@ -25,8 +25,8 @@ backup_exclude:
   - home/.npm/**
   - repo/**
   - state/morning.log
-  - state/run-*.log
-  - state/result.*
+  - state/run-*
+  - state/result-*
   - state/report.out
   - state/job-*
 options:
@@ -62,6 +62,7 @@ schema:
   run_timeout: int(60,3600)
   run_max_turns: int(1,200)
   morning_chat: bool
+  morning_job: str?
   chat_resume: bool
   jobs_parallel: int(1,10)
   job_timeout: int(60,3600)

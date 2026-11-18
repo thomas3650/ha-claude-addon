@@ -112,8 +112,9 @@ claude_copy() {
 # signal is handled at once.
 publish_result() {
   local agent="$1" marker="$2" file="$HC_RESULTS/$1.json"
-  local copy="$HC_STATE/result.in" body="$HC_STATE/result.body" rc=0
-  local err="$HC_STATE/result.err"
+  # The copies are the agent's own, so two runs that end together do not meet.
+  local copy="$HC_STATE/result-$1.in" body="$HC_STATE/result-$1.body" rc=0
+  local err="$HC_STATE/result-$1.err"
   if [[ ! -e "$file" ]]; then
     log "result: $agent: missing"
     return 1
@@ -149,13 +150,17 @@ publish_result() {
     log "result: $agent: malformed (other)"
     return 1
   fi
-  # A fixed run's finding is read from this body afterwards (fixed_run_end):
-  # kept for root alone, before the body is removed, whether or not Home
-  # Assistant is told. Failing to keep it does not change the result.
-  if ( umask 077; cat -- "$body" > "$HC_STATE/fixed-$agent.body.tmp" ) 2>/dev/null; then
-    mv -f -- "$HC_STATE/fixed-$agent.body.tmp" "$HC_STATE/fixed-$agent.body" 2>/dev/null       || rm -f -- "$HC_STATE/fixed-$agent.body.tmp"
-  else
-    rm -f -- "$HC_STATE/fixed-$agent.body.tmp"
+  # The finding of a run of a file from the repo is read from this body
+  # afterwards (the runner, fixed_run_end): kept for root alone, before the
+  # body is removed, whether or not Home Assistant is told. Failing to keep
+  # it does not change the result. Another agent's run has no finding to keep.
+  if declare -F fixed_is >/dev/null && fixed_is "$agent"; then
+    if ( umask 077; cat -- "$body" > "$HC_STATE/fixed-$agent.body.tmp" ) 2>/dev/null; then
+      mv -f -- "$HC_STATE/fixed-$agent.body.tmp" "$HC_STATE/fixed-$agent.body" 2>/dev/null \
+        || rm -f -- "$HC_STATE/fixed-$agent.body.tmp"
+    else
+      rm -f -- "$HC_STATE/fixed-$agent.body.tmp"
+    fi
   fi
   if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
     log "result: $agent (not reported: no Supervisor token)"

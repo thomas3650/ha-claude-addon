@@ -64,7 +64,7 @@ _report_frame() {
 # run_report <variable> [month] - runs the report file, with the month as
 # its only argument when one is given, and stores the outcome in the named
 # variable: ok, failed or not_configured. The outcome is not printed, for
-# the reason run_morning gives. What the file prints goes to a file only
+# the reason run_agent gives. What the file prints goes to a file only
 # root can read, and from there, framed, to the log; what it prints on
 # standard error is thrown away, because an error can quote the data it
 # failed on.

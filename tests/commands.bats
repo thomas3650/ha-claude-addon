@@ -8,8 +8,6 @@ stub_actions() {
   ensure_layout() { :; }
   restart_chat() { echo "restart${1:+ $1}" >> "$CALLS"; }
   clear_chat() { echo "clear${1:+ $1}" >> "$CALLS"; }
-  MORNING_OUTCOME=ok
-  run_morning() { echo "run" >> "$CALLS"; printf -v "$1" '%s' "$MORNING_OUTCOME"; }
 }
 
 @test "parse_command reads a JSON string, a plain word and an object" {
@@ -117,79 +115,23 @@ stub_actions() {
   exec 9<&-
 }
 
-@test "morning runs the briefing, clears the chat with the summary's opening, and reports ok" {
+@test "morning starts the run of the file morning_job names, and returns" {
   load_lib options morning commands; stub_actions
+  job_command() { echo "job $1" >> "$CALLS"; }
+  fixed_is() { [[ "$1" == beta-run ]]; }
+  set_options '{"morning_job":"beta-run"}'
   handle_command 'morning'
-  [ "$(sed -n 1p "$CALLS")" = "run" ]
-  [ "$(sed -n 2p "$CALLS")" = "clear $(opening_prompt ok)" ]
-  [ "$(sed -n 3p "$CALLS")" = "outcome morning ok" ]
+  [ "$(cat "$CALLS")" = "job beta-run" ]
 }
 
-@test "a failed morning run still clears the chat, which says so, and reports the outcome" {
+@test "morning without morning_job, or naming no file from the repo, is not configured and leaves the chat alone" {
   load_lib options morning commands; stub_actions
-  MORNING_OUTCOME=timeout
+  job_command() { echo "job $1" >> "$CALLS"; }
+  fixed_is() { [[ "$1" == beta-run ]]; }
   handle_command 'morning'
-  [ "$(sed -n 2p "$CALLS")" = "clear $(opening_prompt timeout)" ]
-  [ "$(sed -n 3p "$CALLS")" = "outcome morning timeout" ]
-}
-
-@test "with morning_chat true the morning run clears the chat as before" {
-  load_lib options morning commands; stub_actions
-  set_options '{"morning_chat":true}'
+  set_options '{"morning_job":"delta-run"}'
   handle_command 'morning'
-  [ "$(cat "$CALLS")" = "run"$'\n'"clear $(opening_prompt ok)"$'\n'"outcome morning ok" ]
-}
-
-@test "with morning_chat false the morning run does not touch the chat, and still reports the outcome" {
-  load_lib options morning commands; stub_actions
-  set_options '{"morning_chat":false}'
-  as_claude() { echo "as_claude $*" >> "$CALLS"; }
-  handle_command 'morning'
-  [ "$(cat "$CALLS")" = $'run\noutcome morning ok' ]
-  : > "$CALLS"
-  MORNING_OUTCOME=timeout
-  handle_command 'morning'
-  [ "$(cat "$CALLS")" = $'run\noutcome morning timeout' ]
-}
-
-@test "without the agent the chat session is left alone" {
-  load_lib options morning commands; stub_actions
-  MORNING_OUTCOME=not_configured
-  handle_command 'morning'
-  [ "$(cat "$CALLS")" = $'run\noutcome morning not_configured' ]
-}
-
-@test "a stop signal during a morning run ends the main process at once" {
-  STUB="$BATS_TEST_TMPDIR/stub"
-  mkdir -p "$STUB" "$HC_DATA/workspace/assistant/.claude/agents"
-  touch "$HC_DATA/workspace/assistant/.claude/agents/morning-briefing.md"
-  printf '#!/usr/bin/env bash\nsleep 30 &\ntrap "kill $!" TERM\nwait\n' > "$STUB/claude"
-  chmod +x "$STUB/claude"
-  cat > "$BATS_TEST_TMPDIR/main" <<EOT
-for f in paths log options env morning commands; do . "$LIB/\$f.sh"; done
-raise_outcome() { :; }
-restart_chat() { :; }
-clear_chat() { :; }
-trap 'echo stopped; exit 0' TERM
-handle_command morning
-echo finished
-EOT
-  HC_CLAUDE_BIN="$STUB/claude" \
-  HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit" \
-    bash "$BATS_TEST_TMPDIR/main" > "$BATS_TEST_TMPDIR/out" 2>&1 3>&- &
-  pid=$!
-  sleep 2
-  kill -TERM "$pid"
-  for _ in 1 2 3 4 5; do
-    kill -0 "$pid" 2>/dev/null || break
-    sleep 1
-  done
-  pkill -f "$STUB/claude" 2>/dev/null || true
-  run kill -0 "$pid"
-  [ "$status" -ne 0 ]
-  grep -qx "stopped" "$BATS_TEST_TMPDIR/out"
-  run grep "finished" "$BATS_TEST_TMPDIR/out"
-  [ "$status" -eq 1 ]
+  [ "$(cat "$CALLS")" = $'outcome morning not_configured\noutcome morning not_configured' ]
 }
 
 @test "sync and restart-chat report failed when no chat session could be started" {
@@ -199,14 +141,6 @@ EOT
   handle_command 'restart-chat'
   [ "$(grep -c 'outcome sync failed' "$CALLS")" -eq 1 ]
   [ "$(grep -c 'outcome restart-chat failed' "$CALLS")" -eq 1 ]
-}
-
-@test "a morning run keeps its outcome when the new chat session could not be started, and says so" {
-  load_lib options morning commands; stub_actions
-  clear_chat() { return 1; }
-  run handle_command 'morning'
-  [[ "$output" == *"no chat session"* ]]
-  [ "$(tail -1 "$CALLS")" = "outcome morning ok" ]
 }
 
 @test "sync reports kept when the repo could not be fetched and the old working folder stays" {
@@ -290,11 +224,11 @@ stub_run() {
 @test "run starts the named agent, leaves the chat alone and reports the outcome with the agent" {
   load_lib options morning run commands; stub_actions; stub_run
   handle_command '"run house-check"'
-  [ "$(cat "$CALLS")" = $'agent house-check\noutcome run ok house-check' ]
+  [ "$(cat "$CALLS")" = $'agent house-check\noutcome run ok house-check command' ]
   : > "$CALLS"
   RUN_OUTCOME=timeout
   handle_command 'run house-check'
-  [ "$(cat "$CALLS")" = $'agent house-check\noutcome run timeout house-check' ]
+  [ "$(cat "$CALLS")" = $'agent house-check\noutcome run timeout house-check command' ]
   run grep restart "$CALLS"
   [ "$status" -eq 1 ]
 }
@@ -315,11 +249,15 @@ stub_run() {
   touch "$HC_WORKSPACE/.claude/agents/chat.md"
   HC_CLAUDE_BIN="$BATS_TEST_TMPDIR/never"
   long="$(printf 'a%.0s' {1..33})"
-  for line in '"run a b"' '"run chat"' '"run morning-briefing"' "\"run $long\"" '"run ../x"' '"run Abc"'; do
+  for line in '"run a b"' '"run chat"' "\"run $long\"" '"run ../x"' '"run Abc"'; do
     : > "$CALLS"
     handle_command "$line"
-    [ "$(cat "$CALLS")" = "outcome run not_configured" ]
+    [ "$(cat "$CALLS")" = "outcome run not_configured  command" ]
   done
+  # A name with no agent file is a name: it is in the event.
+  : > "$CALLS"
+  handle_command '"run beta-run"'
+  [ "$(cat "$CALLS")" = "outcome run not_configured beta-run command" ]
 }
 
 @test "parse_command reads a plain run with a name" {

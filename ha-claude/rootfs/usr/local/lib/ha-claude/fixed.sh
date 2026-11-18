@@ -319,12 +319,16 @@ fixed_run_begin() {
 }
 
 # fixed_run_end <agent> <outcome> - a fixed run ends: ok, failed or timeout
-# is its status, and not_configured is failed with that error. The finding
-# and the text are the kept result body's verdict and text when that body is
-# from this run, and else stay as they were. The next run is worked out
-# again. Like the start, it never changes the run's outcome.
+# is its status, and not_configured is failed with that error. After an ok
+# run whose kept result body is from this run, the finding and the text are
+# that body's verdict and text, and empty when it has no such string; else
+# they stay as they were. The next run is worked out again. Like the start,
+# it never changes the run's outcome. Every file from the repo now runs in
+# the job runner, which keeps its state itself, so the run command calls
+# these two only for an agent with no file, for which they do nothing; they
+# are kept as step A left them.
 fixed_run_end() {
-  local name="$1" outcome="$2" body started now job state status error="null" finding=null text=null
+  local name="$1" outcome="$2" body started now job state status error="null" finding=null text=null fresh=false
   name="$(fixed_for_agent "$1")" || return 0
   body="$HC_STATE/fixed-$name.body"
   started="$HC_STATE/fixed-$name.started"
@@ -335,6 +339,7 @@ fixed_run_end() {
     *) status=failed ;;
   esac
   if [[ "$status" == ok && -f "$body" && ! -L "$body" && -f "$started" && ! "$body" -ot "$started" ]]; then
+    fresh=true
     finding="$(jq -c '.verdict | if type == "string" then . else null end' "$body" 2>/dev/null)" || finding=null
     text="$(jq -c '.text | if type == "string" then . else null end' "$body" 2>/dev/null)" || text=null
     [[ -n "$finding" ]] || finding=null
@@ -343,8 +348,8 @@ fixed_run_end() {
   rm -f -- "$started" 2>/dev/null || true
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   _job_update "$name" '.status = $status | .error = $error | .last_end = $now
-      | (if $finding != null then .finding = $finding | .text = $text else . end)' \
-    --arg status "$status" --argjson error "$error" --argjson now "$now" \
+      | (if $fresh then .finding = $finding | .text = $text else . end)' \
+    --arg status "$status" --argjson error "$error" --argjson now "$now" --argjson fresh "$fresh" \
     --argjson finding "$finding" --argjson text "$text" >/dev/null 2>&1 \
     || log "fixed: $name: the end could not be published"
   # The next run, from the state as it is now. A job that is not valid has none.

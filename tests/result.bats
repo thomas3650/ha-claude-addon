@@ -19,7 +19,7 @@ stub_curl() {
 # good_file [json] - writes the agent's result file and an older marker.
 good_file() {
   mkdir -p "$HC_RESULTS" "$HC_STATE"
-  MARKER="$HC_STATE/run.started"
+  MARKER="$HC_STATE/run-alpha.started"
   : > "$MARKER"
   touch -t 202001010000 "$MARKER"
   printf '%s' "${1:-{\"count\":3,\"verdict\":\"3 ting\",\"text\":\"a\\nb\"\}}" > "$HC_RESULTS/house-check.json"
@@ -29,9 +29,9 @@ refused() {
   run publish_result house-check "$MARKER"
   [ "$status" -eq 1 ]
   [ ! -e "$SENT/args" ]
-  [ ! -e "$HC_STATE/result.body" ]
-  [ ! -e "$HC_STATE/result.in" ]
-  [ ! -e "$HC_STATE/result.err" ]
+  [ ! -e "$HC_STATE/result-house-check.body" ]
+  [ ! -e "$HC_STATE/result-house-check.in" ]
+  [ ! -e "$HC_STATE/result-house-check.err" ]
 }
 
 @test "a good result is raised as one event with five fields" {
@@ -44,8 +44,8 @@ refused() {
   [ "$(jq -r '.count' "$SENT/body")" = "3" ]
   [ "$(jq -r '.verdict' "$SENT/body")" = "3 ting" ]
   [ "$(jq -r '.text' "$SENT/body")" = $'a\nb' ]
-  [ ! -e "$HC_STATE/result.body" ]
-  [ ! -e "$HC_STATE/result.err" ]
+  [ ! -e "$HC_STATE/result-house-check.body" ]
+  [ ! -e "$HC_STATE/result-house-check.err" ]
 }
 
 @test "the token and the text are not on curl's command line or in the log" {
