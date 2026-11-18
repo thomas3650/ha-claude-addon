@@ -343,7 +343,7 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 
 | Entity | Shows |
 |---|---|
-| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
 | `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
 | `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
 | `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
@@ -363,6 +363,19 @@ The switch's commands arrive on `ha_claude/jobs/<name>/enabled/set`. Only
 fewer than 10 other jobs are enabled. The add-on then changes `enabled` in
 the file and nothing else, as the Claude user. Retained commands are
 ignored.
+
+### Fixed jobs
+
+A fixed job is a file `jobs/<name>.json` in the working folder, named after
+the agent it runs, for a run that belongs to the house and not to a chat.
+The add-on places each one in `/data/jobs/` as a job, so Home Assistant
+shows it with the same entities and switches it on and off like any job;
+`run_by` in its state says what starts it, and `type` is empty. A fixed job
+is outside the limit of 10 enabled jobs and is never ended after 28 days.
+In this version Home Assistant's own automations start the fixed jobs; the
+tick starts none. The list of its tool calls is read from
+`/data/results/fixed/<name>.log.jsonl` and needs the policy flag
+`jobs.fixed_log` in the working folder.
 
 When a run's `notify` goes from false to true, the add-on raises the event
 `ha_claude_job_notify` with `job` and `finding`, once for that run: not

@@ -47,7 +47,7 @@ teardown() {
 }
 
 load_mqtt() {
-  load_lib options env layout morning result jobs mqtt
+  load_lib options env layout morning result jobs fixed mqtt
   ensure_layout
   stub_mqtt
   TODAY="$(date +%F)"
@@ -62,6 +62,16 @@ job_file() {
     '{type: "web", task: "Find the lowest price of a kettle.", schedule: {every_hours: 4},
       end: $end, enabled: true, created: $today}' \
     | jq "${2:-.}" > "$HC_JOBS/$1.json"
+}
+
+# fixed_job <name> - a fixed job: the file in the working folder and the
+# placed copy. The agent is made up.
+fixed_job() {
+  mkdir -p "$HC_WORKSPACE/jobs" "$HC_WORKSPACE/.claude/agents"
+  jq -nc --arg n "$1" '{agent: $n, run_by: "automation", schedule: {time: "06:30"}, task: "Test.", enabled: true}' \
+    > "$HC_WORKSPACE/jobs/$1.json"
+  touch "$HC_WORKSPACE/.claude/agents/$1.md"
+  cp "$HC_WORKSPACE/jobs/$1.json" "$HC_JOBS/$1.json"
 }
 
 # msg <topic> - the last message published on the topic.
@@ -502,4 +512,66 @@ notifies() { grep -c ha_claude_job_notify "$SENT/args" 2>/dev/null || true; }
   mqtt_listen_start
   [ "$(cat "$HC_STATE/mqtt-listen.pid")" != "$$" ]
   kill -0 "$$"
+}
+
+@test "a fixed job is published as the same six entities, with run_by and no type" {
+  load_mqtt
+  mqtt_config
+  fixed_job alpha-run
+  job_file price
+  mqtt_publish_job alpha-run
+  mqtt_publish_job price
+  for e in sensor/ha_claude_job_alpha_run_status sensor/ha_claude_job_alpha_run_next_run \
+           sensor/ha_claude_job_alpha_run_last_run sensor/ha_claude_job_alpha_run_finding \
+           binary_sensor/ha_claude_job_alpha_run_notify switch/ha_claude_job_alpha_run_enabled; do
+    [ "$(msg "homeassistant/$e/config" | jq -r '.state_topic')" = "ha_claude/jobs/alpha-run/state" ]
+  done
+  state="$(msg ha_claude/jobs/alpha-run/state)"
+  [ "$(jq -r .run_by <<<"$state")" = automation ]
+  [ "$(jq -c .type <<<"$state")" = null ]
+  [ "$(jq -r .enabled <<<"$state")" = ON ]
+  [ "$(jq -c .run_by <<<"$(msg ha_claude/jobs/price/state)")" = null ]
+  tmpl="$(msg homeassistant/sensor/ha_claude_job_alpha_run_status/config | jq -r .json_attributes_template)"
+  [[ "$tmpl" == *"value_json.run_by"* ]]
+}
+
+@test "a fixed job's calls come from results/fixed, not results/jobs" {
+  load_mqtt
+  mqtt_config
+  fixed_job alpha-run
+  mkdir -p "$HC_RESULTS/fixed" "$HC_JOB_RESULTS"
+  printf '{"tool":"Read","input":{"file_path":"/x"}}\n' > "$HC_RESULTS/fixed/alpha-run.log.jsonl"
+  printf '{"tool":"WebFetch","input":{}}\n' > "$HC_JOB_RESULTS/alpha-run.log.jsonl"
+  mqtt_publish_job alpha-run
+  [ "$(msg ha_claude/jobs/alpha-run/state | jq -r '.calls[0].tool')" = Read ]
+  [ "$(msg ha_claude/jobs/alpha-run/state | jq '.calls | length')" = 1 ]
+}
+
+@test "the switch turns a fixed job on with 10 chat jobs enabled" {
+  load_mqtt
+  mqtt_config
+  for n in a b c d e f g h i j; do job_file "j$n"; done
+  fixed_job alpha-run
+  jq '.enabled = false' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/f" && cp "$BATS_TEST_TMPDIR/f" "$HC_JOBS/alpha-run.json"
+  mqtt_on_switch "ha_claude/jobs/alpha-run/enabled/set ON"
+  [ "$(jq -r .enabled "$HC_JOBS/alpha-run.json")" = true ]
+  [ "$(msg ha_claude/jobs/alpha-run/state | jq -r .enabled)" = ON ]
+  [ "$(jq -r .agent "$HC_JOBS/alpha-run.json")" = alpha-run ]
+}
+
+@test "a switch message waits while the placing holds the lock, and the placing's file is not lost" {
+  load_mqtt
+  mqtt_config
+  fixed_job alpha-run
+  # The placing, as a stand-in: under the lock it reads the placed file,
+  # takes a second, then writes it back with a new task. A switch that did
+  # not wait would be written over.
+  placing() { local cur; cur="$(cat "$HC_JOBS/alpha-run.json")"; sleep 1; jq -c '.task = "New."' <<<"$cur" > "$HC_JOBS/alpha-run.json.p"; mv "$HC_JOBS/alpha-run.json.p" "$HC_JOBS/alpha-run.json"; }
+  _fixed_locked placing &
+  holder=$!
+  sleep 0.3
+  mqtt_on_switch "ha_claude/jobs/alpha-run/enabled/set OFF"
+  wait "$holder"
+  [ "$(jq -r .task "$HC_JOBS/alpha-run.json")" = "New." ]
+  [ "$(jq -r .enabled "$HC_JOBS/alpha-run.json")" = false ]
 }
