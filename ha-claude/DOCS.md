@@ -282,7 +282,8 @@ starts the jobs that are due.
 | `created` | The day the file was first written, `YYYY-MM-DD` |
 
 The file is one JSON object, with no field written twice; no other field
-is accepted. At most 10 jobs are enabled at once; an 11th is
+is accepted. A tick reads at most 32 job files, the ones the add-on saw
+first; the others are skipped, and the log says so. At most 10 jobs are enabled at once; an 11th is
 `invalid`, the one the add-on saw last. The add-on reads a file only
 through a copy the Claude user makes, within a few seconds and up to
 16 KiB, and keeps its own record of the day it first saw each job: the
@@ -351,8 +352,11 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 The state is one retained JSON message on `ha_claude/jobs/<name>/state`,
 published after every change. Text in it is cleaned of control characters.
 When a job ends or its file is gone, its entities are removed with empty
-retained messages; at start every job is published again and the entities
-of jobs whose file has gone are removed.
+retained messages; a removal the broker did not take is tried again on
+every tick. At start every job is published again and the entities of jobs
+whose file has gone are removed. Each publish has 10 seconds; when one fails
+in a tick, the broker is taken as down for the rest of that tick and no job
+starts in it, so no job runs that Home Assistant does not show.
 
 The switch's commands arrive on `ha_claude/jobs/<name>/enabled/set`. Only
 `ON` or `OFF` is taken, only for an existing job file, and `ON` only while
@@ -361,7 +365,8 @@ the file and nothing else, as the Claude user. Retained commands are
 ignored.
 
 When a run's `notify` goes from false to true, the add-on raises the event
-`ha_claude_job_notify` with `job` and `finding`, once for that run.
+`ha_claude_job_notify` with `job` and `finding`, once for that run: not
+again when the next run starts or fails.
 
 ## The report
 

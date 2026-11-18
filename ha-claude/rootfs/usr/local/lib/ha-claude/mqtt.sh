@@ -15,17 +15,58 @@
 # refuses its publishes there.
 : "${HC_MQTT_DIR:=/run/ha-claude/mqtt}"
 : "${HC_MQTT_RETRY:=5}"
+: "${HC_MQTT_WAIT:=10}"
+: "${HC_LIMIT_BIN:=/usr/local/bin/ha-claude-limit}"
 HC_MQTT_PREFIX=ha_claude/jobs
 HC_MQTT_NO_BROKER_LOGGED=0
+# Set when a publish failed in this tick: the broker is then taken as down
+# for the rest of it.
+HC_MQTT_FAILED=0
 # The entities of a job: component and key.
 HC_MQTT_ENTITIES=(sensor/status sensor/next_run sensor/last_run sensor/finding binary_sensor/notify switch/enabled)
 
 # _mqtt_client <pub|sub> [args...] - runs a client with the login from its
-# config file.
+# config file. A publish runs under a time limit, so a broker that hangs
+# holds a tick for seconds, not for ever; the listener waits as long as it
+# runs.
 _mqtt_client() {
   local name="mosquitto_$1"
-  shift
-  XDG_CONFIG_HOME="$HC_MQTT_DIR" "$name" "$@"
+  if [[ "$1" == pub ]]; then
+    shift
+    HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$HC_MQTT_WAIT" env XDG_CONFIG_HOME="$HC_MQTT_DIR" "$name" "$@"
+  else
+    shift
+    XDG_CONFIG_HOME="$HC_MQTT_DIR" "$name" "$@"
+  fi
+}
+
+# _mqtt_locked <command> [args...] - runs the command alone: the listener,
+# the command loop and the runners all publish, and a job's publish, its
+# removal, the published list and the notify mark are each one step. flock
+# where there is one (the image); a folder made and removed elsewhere.
+_mqtt_locked() {
+  local lock="${HC_STATE:?}/mqtt.lock" rc=0 tries=0
+  mkdir -p "$HC_STATE"
+  if command -v flock >/dev/null 2>&1; then
+    {
+      if ! flock -w 60 9; then
+        log "mqtt: the lock was not free"
+        return 1
+      fi
+      "$@" || rc=$?
+    } 9>"$lock"
+    return "$rc"
+  fi
+  until mkdir "$lock.d" 2>/dev/null; do
+    if (( ++tries > 600 )); then
+      log "mqtt: the lock was not free"
+      return 1
+    fi
+    sleep 0.1
+  done
+  "$@" || rc=$?
+  rmdir "$lock.d" 2>/dev/null
+  return "$rc"
 }
 
 mqtt_known() {
@@ -60,9 +101,18 @@ mqtt_config() {
   log "mqtt: the broker is known"
 }
 
+# jobs_tick_begin - a new tick tries the broker afresh.
+jobs_tick_begin() {
+  HC_MQTT_FAILED=0
+}
+
 # jobs_can_run - true when Home Assistant can see the jobs: a broker is
 # known, or is found now. The first time it is not, the log says so once.
 # With a broker found, the listener runs and every job is published.
+#
+# A removal the broker did not take is tried again here, on every tick. A
+# publish that failed in this tick means the broker is down for it: no job
+# starts that Home Assistant would not see.
 jobs_can_run() {
   if ! mqtt_known; then
     if ! mqtt_config; then
@@ -73,8 +123,14 @@ jobs_can_run() {
       return 1
     fi
     mqtt_republish_all
+  else
+    _mqtt_locked _mqtt_remove_gone || true
   fi
   mqtt_listen_start
+  if (( HC_MQTT_FAILED )); then
+    log "mqtt: the broker did not answer; no job starts this tick"
+    return 1
+  fi
   return 0
 }
 
@@ -88,20 +144,31 @@ _mqtt_id() {
 
 # _mqtt_send <topic> [file] - publishes the file's content on the topic,
 # retained; without a file, an empty retained message, which removes it.
+# Fails, with HC_MQTT_FAILED set, when the broker did not take it in time;
+# after that every send of the tick fails at once, so a broker that hangs
+# costs a tick one time limit.
 _mqtt_send() {
+  local rc=0
+  (( HC_MQTT_FAILED == 0 )) || return 1
   if [[ -n "${2:-}" ]]; then
-    _mqtt_client pub -q 1 -r -t "$1" -s < "$2" >/dev/null 2>&1
+    _mqtt_client pub -q 1 -r -t "$1" -s < "$2" >/dev/null 2>&1 || rc=$?
   else
-    _mqtt_client pub -q 1 -r -n -t "$1" </dev/null >/dev/null 2>&1
-  fi || log "mqtt: could not publish to the broker"
+    _mqtt_client pub -q 1 -r -n -t "$1" </dev/null >/dev/null 2>&1 || rc=$?
+  fi
+  if (( rc != 0 )); then
+    HC_MQTT_FAILED=1
+    log "mqtt: could not publish to the broker"
+    return 1
+  fi
 }
 
 # _mqtt_published <add|remove> <name> - the root-only list of the jobs that
 # have entities, so those whose file has gone are removed at start.
+# Called under the lock.
 _mqtt_published() {
   local list="$HC_JOB_STATE/published" tmp
   mkdir -p "$HC_JOB_STATE"
-  tmp="$list.tmp"
+  tmp="$(mktemp "$HC_JOB_STATE/published.XXXXXX")" || return 1
   { [[ -f "$list" ]] && grep -v -x -F -- "$2" "$list"; [[ "$1" == add ]] && printf '%s\n' "$2"; } > "$tmp" || true
   mv -f "$tmp" "$list"
 }
@@ -111,7 +178,8 @@ _mqtt_published() {
 # The log is the Claude user's, so it is read through a copy that user
 # makes: its last 64 KiB, within a few seconds.
 _mqtt_calls() {
-  local copy="$HC_STATE/job-$1.calls"
+  local copy
+  copy="$(mktemp "$HC_STATE/job-calls.XXXXXX")" || { echo '[]' > "$2"; return 0; }
   if [[ -e "$HC_JOB_RESULTS/$1.log.jsonl" ]] \
      && claude_copy "$HC_JOB_RESULTS/$1.log.jsonl" "$copy" 65536 "$HC_RESULT_WAIT" tail; then
     jq -R 'fromjson? | select(type == "object")' "$copy" 2>/dev/null \
@@ -127,19 +195,25 @@ _mqtt_calls() {
 
 # mqtt_publish_job <name> - publishes the job's entities and its state.
 mqtt_publish_job() {
-  local name="$1" e comp key id cfg="$HC_STATE/job-$1.mqtt" job="$HC_STATE/job-$1.file"
-  local calls="$HC_STATE/job-$1.callsj" state="$HC_STATE/job-$1.statej" topic="$HC_MQTT_PREFIX/$1/state"
-  job_name_ok "$name" || return 0
+  job_name_ok "$1" || return 0
   mqtt_known || return 0
+  _mqtt_locked _mqtt_publish_job "$1"
+}
+
+# _mqtt_publish_job <name> - the same, under the lock, with files of this
+# call's own.
+_mqtt_publish_job() {
+  local name="$1" e comp key id topic="$HC_MQTT_PREFIX/$1/state" dir rc=0
+  dir="$(mktemp -d "$HC_STATE/job-mqtt.XXXXXX")" || return 1
+  local cfg="$dir/cfg" job="$dir/job" calls="$dir/calls" state="$dir/state" raw="$dir/raw"
   ( umask 077
     # The file as it is, valid or not, so an invalid job still shows.
-    if job_read "$name" "$HC_STATE/job-$name.raw"; then
+    if job_read "$name" "$raw"; then
       jq -cs 'if length == 1 and (.[0] | type) == "object" then .[0] else {} end' \
-        "$HC_STATE/job-$name.raw" > "$job" 2>/dev/null || echo '{}' > "$job"
+        "$raw" > "$job" 2>/dev/null || echo '{}' > "$job"
     else
       echo '{}' > "$job"
     fi
-    rm -f -- "$HC_STATE/job-$name.raw"
     _job_state "$name" > "$state"
     _mqtt_calls "$name" "$calls"
   )
@@ -166,7 +240,7 @@ mqtt_publish_job() {
              payload_on: "ON", payload_off: "OFF", state_on: "ON", state_off: "OFF"}
           end
       ' > "$cfg" )
-    _mqtt_send "homeassistant/$comp/ha_claude_job_${id}_$key/config" "$cfg"
+    _mqtt_send "homeassistant/$comp/ha_claude_job_${id}_$key/config" "$cfg" || rc=1
   done
   ( umask 077; jq -cn --slurpfile j "$job" --slurpfile s "$state" --slurpfile c "$calls" "$HC_JQ_CLEAN"'
       def time: if type == "number" then todate else null end;
@@ -180,51 +254,75 @@ mqtt_publish_job() {
          type: ($j.type | text(false)), schedule: (if ($j.schedule | type) == "object" then $j.schedule else null end),
          end: ($j.end | text(false)), task: ($j.task | text(true)), calls: $c[0]}
     ' > "$cfg" )
-  _mqtt_send "$topic" "$cfg"
-  rm -f -- "$cfg" "$job" "$calls" "$state"
+  _mqtt_send "$topic" "$cfg" || rc=1
+  rm -rf -- "${dir:?}"
   _mqtt_published add "$name"
+  return "$rc"
 }
 
 # mqtt_remove_job <name> - removes the job's entities and its state.
 mqtt_remove_job() {
-  local e
   job_name_ok "$1" || return 0
   mqtt_known || return 0
-  for e in "${HC_MQTT_ENTITIES[@]}"; do
-    _mqtt_send "homeassistant/${e%%/*}/ha_claude_job_$(_mqtt_id "$1")_${e#*/}/config"
-  done
-  _mqtt_send "$HC_MQTT_PREFIX/$1/state"
-  _mqtt_published remove "$1"
+  _mqtt_locked _mqtt_remove_job "$1"
 }
 
-# mqtt_republish_all - at start: every job file is published, and the jobs
-# that were published and have no file now are removed.
+# _mqtt_remove_job <name> - the same, under the lock. The job leaves the
+# published list only when the broker took every removal; otherwise the
+# next tick tries again.
+_mqtt_remove_job() {
+  local e ok=1
+  for e in "${HC_MQTT_ENTITIES[@]}"; do
+    _mqtt_send "homeassistant/${e%%/*}/ha_claude_job_$(_mqtt_id "$1")_${e#*/}/config" || ok=0
+  done
+  _mqtt_send "$HC_MQTT_PREFIX/$1/state" || ok=0
+  if (( ok )); then
+    _mqtt_published remove "$1"
+  else
+    log "mqtt: $1 is not removed yet; the next tick tries again"
+  fi
+}
+
+# _mqtt_remove_gone - under the lock: removes the published jobs that have
+# no file now.
+_mqtt_remove_gone() {
+  local name
+  while read -r name; do
+    job_name_ok "$name" || continue
+    [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]] || _mqtt_remove_job "$name" || true
+  done < <(cat "$HC_JOB_STATE/published" 2>/dev/null)
+}
+
+# mqtt_republish_all - at start: the jobs that were published and have no
+# file now are removed, and the job files a tick reads are published.
 mqtt_republish_all() {
   local name
   mqtt_known || return 0
+  _mqtt_locked _mqtt_remove_gone || true
   while read -r name; do
-    [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]] || mqtt_remove_job "$name"
-  done < <(cat "$HC_JOB_STATE/published" 2>/dev/null)
-  while read -r name; do
-    mqtt_publish_job "$name"
-  done < <(job_list)
+    mqtt_publish_job "$name" || true
+  done < <(_jobs_order "$(date +%F)")
 }
 
 # _mqtt_notify <name> - raises ha_claude_job_notify with the job and its
 # finding, once for each run whose notify went from false to true. The body
 # is read by curl from a file only root can read; the token goes on
 # standard input.
+#
+# The run is known by its end, last_end: a run that starts clears
+# notify_rose and changes last_run, and must not count as a new rise. The
+# check and the mark are one step, under the lock.
 _mqtt_notify() {
-  local name="$1" state mark="$HC_JOB_STATE/$1.notified" body="$HC_STATE/job-$1.notify" run
+  local name="$1" state body run
   state="$(_job_state "$name")"
-  [[ "$(jq -r '.notify_rose == true' <<<"$state")" == true ]] || return 0
-  run="$(jq -r '.last_run // 0' <<<"$state")"
-  [[ "$(cat "$mark" 2>/dev/null)" != "$run" ]] || return 0
-  printf '%s\n' "$run" > "$mark"
+  [[ "$(jq -r '.notify_rose == true and .status != "running"' <<<"$state")" == true ]] || return 0
+  run="$(jq -r '.last_end // 0' <<<"$state")"
+  _mqtt_locked _mqtt_mark "$name" "$run" || return 0
   if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
     log "jobs: $name notifies (not reported: no Supervisor token)"
     return 0
   fi
+  body="$(mktemp "$HC_STATE/job-notify.XXXXXX")" || return 0
   ( umask 077; jq -c --arg job "$name" "$HC_JQ_CLEAN"'{job: $job, finding: ((.finding // "") | clean(false))}' \
       <<<"$state" > "$body" )
   if curl -fsS -m 10 -o /dev/null -X POST -H "Content-Type: application/json" \
@@ -238,15 +336,22 @@ _mqtt_notify() {
   rm -f -- "$body"
 }
 
+# _mqtt_mark <name> <run> - true, and marked, when the run was not told yet.
+_mqtt_mark() {
+  local mark="$HC_JOB_STATE/$1.notified"
+  [[ "$(cat "$mark" 2>/dev/null)" != "$2" ]] || return 1
+  printf '%s\n' "$2" > "$mark"
+}
+
 # jobs_on_change <name> - fills the jobs' hook: a job with a file and a
 # state is published, and its notify raised; one without is removed.
 jobs_on_change() {
   job_name_ok "$1" || return 0
   if [[ -e "$HC_JOBS/$1.json" || -L "$HC_JOBS/$1.json" ]]; then
-    mqtt_publish_job "$1"
-    [[ -f "$HC_JOB_STATE/$1.json" ]] && _mqtt_notify "$1"
+    mqtt_publish_job "$1" || true
+    [[ -f "$HC_JOB_STATE/$1.json" ]] && { _mqtt_notify "$1" || true; }
   else
-    mqtt_remove_job "$1"
+    mqtt_remove_job "$1" || true
     rm -f -- "${HC_JOB_STATE:?}/$1.notified"
   fi
   return 0
@@ -255,13 +360,14 @@ jobs_on_change() {
 # _mqtt_enabled_others <name> - prints how many other job files are
 # enabled, valid or not: the safe direction for the limit.
 _mqtt_enabled_others() {
-  local other n=0 copy="$HC_STATE/job-switch.count"
+  local other n=0 copy
+  copy="$(mktemp "$HC_STATE/job-count.XXXXXX")" || { echo "$HC_JOBS_MAX"; return 0; }
   while read -r other; do
     [[ "$other" != "$1" ]] || continue
     job_read "$other" "$copy" || continue
     [[ "$(jq -rs 'if length == 1 and (.[0] | type) == "object" and (.[0] | has("agent") | not)
                   then .[0].enabled == true else false end' "$copy" 2>/dev/null)" == true ]] && n=$((n + 1))
-  done < <(job_list)
+  done < <(_jobs_order "$(date +%F)")
   rm -f -- "$copy"
   printf '%s\n' "$n"
 }
@@ -271,18 +377,25 @@ _mqtt_enabled_others() {
 # are enabled. Only enabled changes; the file is rewritten whole and
 # replaced in one step, as the Claude user, whose folder it is.
 mqtt_on_switch() {
-  local line="$1" topic payload name want copy="$HC_STATE/job-switch.in" new="$HC_STATE/job-switch.new"
+  local line="$1" topic payload name want copy new
   local re="^$HC_MQTT_PREFIX/([a-z][a-z0-9-]{0,31})/enabled/set\$"
   topic="${line%% *}"
   [[ "$line" == *" "* ]] && payload="${line#* }" || payload=""
   [[ "$topic" =~ $re ]] || return 0
   name="${BASH_REMATCH[1]}"
+  # The listener has no tick: each message tries the broker afresh.
+  HC_MQTT_FAILED=0
   case "$payload" in
     ON) want=true ;;
     OFF) want=false ;;
     *) return 0 ;;
   esac
-  job_read "$name" "$copy" || return 0
+  copy="$(mktemp "$HC_STATE/job-switch.XXXXXX")" || return 0
+  new="$copy.new"
+  if ! job_read "$name" "$copy"; then
+    rm -f -- "$copy"
+    return 0
+  fi
   if [[ "$want" == true ]] && (( $(_mqtt_enabled_others "$name") >= HC_JOBS_MAX )); then
     log "jobs: $name stays off: $HC_JOBS_MAX other jobs are on"
     rm -f -- "$copy"
@@ -303,7 +416,7 @@ mqtt_on_switch() {
     log "jobs: $name could not be switched"
   fi
   rm -f -- "$copy" "$new"
-  mqtt_publish_job "$name"
+  mqtt_publish_job "$name" || true
 }
 
 # mqtt_listen_start - starts the listener for the switches when none runs:

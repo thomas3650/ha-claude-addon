@@ -11,13 +11,22 @@ stub_mqtt() {
   PUB="$BATS_TEST_TMPDIR/pub"; mkdir -p "$PUB"; : > "$PUB/all"
   SENT="$BATS_TEST_TMPDIR/sent"; mkdir -p "$SENT"
   BROKER='{"result":"ok","data":{"host":"core-mosquitto","port":1883,"ssl":false,"username":"addons","password":"s3cret-pw","protocol":"3.1.1"}}'
-  mosquitto_pub() {
-    local topic="" a prev="" payload
-    for a in "$@"; do [[ "$prev" == -t ]] && topic="$a"; prev="$a"; done
-    if [[ " $* " == *" -n "* ]]; then payload=""; else payload="$(cat)"; fi
-    printf '%s\t%s\t%s\n' "$*" "${XDG_CONFIG_HOME:-}" "$topic" >> "$PUB/all"
-    printf '%s' "$payload" > "$PUB/$(tr '/' '_' <<<"$topic")"
-  }
+  # A program, not a function: it runs under the time limit. It fails
+  # while the file MQTT_DOWN exists, and takes MQTT_DELAY seconds.
+  export PUB MQTT_DOWN="$BATS_TEST_TMPDIR/mqtt-down" MQTT_DELAY=0
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/mosquitto_pub" <<'EOT'
+#!/usr/bin/env bash
+topic="" prev=""
+for a in "$@"; do [[ "$prev" == -t ]] && topic="$a"; prev="$a"; done
+if [[ " $* " == *" -n "* ]]; then payload=""; else payload="$(cat)"; fi
+sleep "${MQTT_DELAY:-0}"
+[[ -e "$MQTT_DOWN" ]] && exit 5
+printf '%s\t%s\t%s\t%s\n' "$*" "${XDG_CONFIG_HOME:-}" "${#payload}" "$topic" >> "$PUB/all"
+printf '%s' "$payload" > "$PUB/$(tr '/' '_' <<<"$topic")"
+EOT
+  chmod +x "$BATS_TEST_TMPDIR/bin/mosquitto_pub"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
   curl() {
     local a
     printf '%s\n' "$*" >> "$SENT/args"
@@ -191,7 +200,7 @@ msg() { cat "$PUB/$(tr '/' '_' <<<"$1")"; }
   jobs_on_change price
   [ "$(grep -c $'\t'homeassistant/ "$PUB/all")" -eq 6 ]
   grep -q $'\t'ha_claude/jobs/price/state'$' "$PUB/all"
-  while IFS=$'\t' read -r args _ topic; do
+  while IFS=$'\t' read -r args _ _ topic; do
     [[ " $args " == *" -r "* && " $args " == *" -n "* ]]
   done < "$PUB/all"
   run grep -x price "$HC_JOB_STATE/published"
@@ -292,7 +301,7 @@ msg() { cat "$PUB/$(tr '/' '_' <<<"$1")"; }
   [ "$status" -eq 1 ]
   jobs_on_change price
   [ "$(grep -c ha_claude_job_notify "$SENT/args")" -eq 1 ]
-  jq '.last_run = 200' "$HC_JOB_STATE/price.json" > "$BATS_TEST_TMPDIR/s" && cp "$BATS_TEST_TMPDIR/s" "$HC_JOB_STATE/price.json"
+  jq '.last_run = 200 | .last_end = 210' "$HC_JOB_STATE/price.json" > "$BATS_TEST_TMPDIR/s" && cp "$BATS_TEST_TMPDIR/s" "$HC_JOB_STATE/price.json"
   jobs_on_change price
   [ "$(grep -c ha_claude_job_notify "$SENT/args")" -eq 2 ]
 }
@@ -353,4 +362,144 @@ msg() { cat "$PUB/$(tr '/' '_' <<<"$1")"; }
   jobs_on_change my-job
   grep -q $'\t'homeassistant/switch/ha_claude_job_my_job_enabled/config'$' "$PUB/all"
   grep -q $'\t'ha_claude/jobs/my-job/state'$' "$PUB/all"
+}
+
+# notifies - how many ha_claude_job_notify events were sent.
+notifies() { grep -c ha_claude_job_notify "$SENT/args" 2>/dev/null || true; }
+
+@test "a rise is told once: not again when the next run starts, nor when that run fails" {
+  load_mqtt
+  mqtt_config
+  job_file price
+  put() { jq -n "$1" > "$HC_JOB_STATE/price.json"; jobs_on_change price; }
+  put '{first_seen: "2026-11-18", status: "ok", last_run: 100, last_end: 110, notify: true, notify_rose: true, finding: "f"}'
+  [ "$(notifies)" -eq 1 ]
+  put '{first_seen: "2026-11-18", status: "running", last_run: 200, last_end: 110, notify: true, notify_rose: true, finding: "f"}'
+  [ "$(notifies)" -eq 1 ]
+  put '{first_seen: "2026-11-18", status: "failed", last_run: 200, last_end: 210, notify: true, notify_rose: false, finding: "f"}'
+  [ "$(notifies)" -eq 1 ]
+  put '{first_seen: "2026-11-18", status: "ok", last_run: 300, last_end: 310, notify: true, notify_rose: true, finding: "f"}'
+  [ "$(notifies)" -eq 2 ]
+}
+
+@test "a run's start clears notify_rose" {
+  load_mqtt
+  mkdir -p "$HC_WORKSPACE/.claude/agents"; touch "$HC_WORKSPACE/.claude/agents/job-web.md"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nexec sleep 30\n' > "$BATS_TEST_TMPDIR/bin/claude"; chmod +x "$BATS_TEST_TMPDIR/bin/claude"
+  export HC_CLAUDE_BIN="$BATS_TEST_TMPDIR/bin/claude"
+  mqtt_config
+  job_file price
+  jq -n '{first_seen: "2026-11-18", status: "ok", last_run: 100, last_end: 110, notify: true, notify_rose: true}' > "$HC_JOB_STATE/price.json"
+  jobs_tick
+  [ "$(jq -r .status "$HC_JOB_STATE/price.json")" = running ]
+  [ "$(jq -r .notify_rose "$HC_JOB_STATE/price.json")" = false ]
+}
+
+@test "a removal the broker did not take keeps the job listed, and the next tick tries again" {
+  load_mqtt
+  mqtt_config
+  job_file price
+  mqtt_publish_job price
+  rm "$HC_JOBS/price.json"
+  touch "$MQTT_DOWN"
+  jobs_on_change price
+  grep -qx price "$HC_JOB_STATE/published"
+  rm "$MQTT_DOWN"
+  : > "$PUB/all"
+  jobs_tick
+  grep -q $'\t'homeassistant/switch/ha_claude_job_price_enabled/config'$' "$PUB/all"
+  run grep -x price "$HC_JOB_STATE/published"
+  [ "$status" -eq 1 ]
+}
+
+@test "a job whose file could not be moved to ended keeps its state and is not told as gone" {
+  load_mqtt
+  mqtt_config
+  job_file price ".created = \"$(days_after "$TODAY" -3)\" | .end = \"$(days_after "$TODAY" -1)\""
+  jq -n --arg d "$(days_after "$TODAY" -3)" '{first_seen: $d, status: "ok"}' > "$HC_JOB_STATE/price.json"
+  as_claude() { [[ " $* " == *" mv "* ]] && return 1; "$@"; }
+  : > "$PUB/all"
+  jobs_tick
+  [ -e "$HC_JOB_STATE/price.json" ]
+  [ -e "$HC_JOBS/price.json" ]
+  run grep "ha_claude_job_price" "$PUB/all"
+  [ "$status" -eq 1 ]
+  unset -f as_claude; load_lib env
+  jobs_tick
+  [ -e "$HC_JOBS/ended/price.json" ]
+  [ ! -e "$HC_JOB_STATE/price.json" ]
+}
+
+@test "two publishes of one job at once never send an empty or missing config" {
+  load_mqtt
+  mqtt_config
+  job_file price
+  export MQTT_DELAY=0.2
+  mqtt_publish_job price & a=$!
+  mqtt_publish_job price & b=$!
+  wait "$a" "$b"
+  [ "$(grep -c $'\t'homeassistant/ "$PUB/all")" -eq 12 ]
+  run awk -F '\t' '$4 ~ /^homeassistant\// && $3 == 0' "$PUB/all"
+  [ -z "$output" ]
+  [ "$(grep -c $'\t'ha_claude/jobs/price/state'$' "$PUB/all")" -eq 2 ]
+  [ "$(grep -cx price "$HC_JOB_STATE/published")" -eq 1 ]
+}
+
+@test "a tick reads at most 32 job files, the first seen first, and says so once" {
+  load_mqtt
+  BROKER=""
+  for i in $(seq 10 49); do job_file "j$i" '.enabled = false'; done
+  jobs_tick 2> "$BATS_TEST_TMPDIR/err"
+  [ "$(ls "$HC_JOB_STATE"/*.json | wc -l | tr -d ' ')" -eq 32 ]
+  [ -e "$HC_JOB_STATE/j41.json" ]
+  [ ! -e "$HC_JOB_STATE/j42.json" ]
+  [ "$(grep -c "only the first 32" "$BATS_TEST_TMPDIR/err")" -eq 1 ]
+}
+
+@test "a publish under the time limit: a broker that hangs costs the limit, and that tick starts no job" {
+  load_mqtt
+  mkdir -p "$HC_WORKSPACE/.claude/agents"; touch "$HC_WORKSPACE/.claude/agents/job-web.md"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > "$BATS_TEST_TMPDIR/bin/claude"; chmod +x "$BATS_TEST_TMPDIR/bin/claude"
+  export HC_CLAUDE_BIN="$BATS_TEST_TMPDIR/bin/claude" HC_MQTT_WAIT=1
+  mqtt_config
+  job_file price
+  export MQTT_DELAY=20
+  started=$SECONDS
+  jobs_tick
+  (( SECONDS - started < 20 ))
+  [ ! -e "$HC_JOB_STATE/price.pid" ]
+  [ "$(jq -r .status "$HC_JOB_STATE/price.json")" != running ]
+  export MQTT_DELAY=0
+  jobs_tick
+  [ -e "$HC_JOB_STATE/price.pid" ]
+  jobs_wait_idle
+}
+
+@test "a publish that fails makes that tick start no job" {
+  load_mqtt
+  mkdir -p "$HC_WORKSPACE/.claude/agents"; touch "$HC_WORKSPACE/.claude/agents/job-web.md"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > "$BATS_TEST_TMPDIR/bin/claude"; chmod +x "$BATS_TEST_TMPDIR/bin/claude"
+  export HC_CLAUDE_BIN="$BATS_TEST_TMPDIR/bin/claude"
+  mqtt_config
+  job_file price
+  touch "$MQTT_DOWN"
+  jobs_tick 2> "$BATS_TEST_TMPDIR/err"
+  [ ! -e "$HC_JOB_STATE/price.pid" ]
+  grep -q "the broker did not answer" "$BATS_TEST_TMPDIR/err"
+  rm "$MQTT_DOWN"
+  jobs_tick
+  [ -e "$HC_JOB_STATE/price.pid" ]
+  jobs_wait_idle
+}
+
+@test "at start a listener PID file left from before is removed, and a new listener starts" {
+  load_mqtt
+  echo "$$" > "$HC_STATE/mqtt-listen.pid"
+  jobs_startup
+  [ ! -e "$HC_STATE/mqtt-listen.pid" ]
+  mqtt_config
+  mosquitto_sub() { sleep 30; }
+  mqtt_listen_start
+  [ "$(cat "$HC_STATE/mqtt-listen.pid")" != "$$" ]
+  kill -0 "$$"
 }

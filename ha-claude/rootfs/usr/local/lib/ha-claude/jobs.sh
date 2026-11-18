@@ -244,6 +244,9 @@ declare -F jobs_on_change >/dev/null || jobs_on_change() { :; }
 # cannot see them.
 declare -F jobs_can_run >/dev/null || jobs_can_run() { return 0; }
 
+# Called as a tick begins.
+declare -F jobs_tick_begin >/dev/null || jobs_tick_begin() { :; }
+
 # _job_state <name> - prints the job's state, or {} when it has none.
 _job_state() {
   jq -c 'if type == "object" then . else {} end' "$HC_JOB_STATE/$1.json" 2>/dev/null || echo '{}'
@@ -327,6 +330,10 @@ jobs_startup() {
       _job_update "$name" '.status = "failed" | .error = "stopped" | .notify_rose = false'
     fi
   done
+  # The listener is gone with the old container too, and so is any holder of
+  # the publishing lock.
+  rm -rf -- "$state/mqtt-listen.pid" "$state/mqtt.lock.d" "$state"/job-mqtt.* "$state"/job-calls.* \
+        "$state"/job-notify.* "$state"/job-switch.* "$state"/job-count.*
   rm -f -- "$dir"/*.pid "$dir"/*.started "$dir"/*.tmp \
         "$state"/job-*.prompt "$state"/job-*.in "$state"/job-*.err "$state"/job-*.body "$state"/job.in
 }
@@ -503,7 +510,8 @@ _job_start() {
   rm -f -- "$HC_STATE/job-$name.log"
   ( umask 077; : > "$HC_STATE/job-$name.log" )
   # shellcheck disable=SC2016  # jq's variables, not the shell's
-  _job_update "$name" '.status = "running" | .error = null | .last_run = $now | .next_run = null' \
+  _job_update "$name" '.status = "running" | .error = null | .last_run = $now | .next_run = null
+      | .notify_rose = false' \
     --argjson now "$now"
   _job_run "$name" "$job" "$agent" &
   printf '%s\n' "$!" > "$HC_JOB_STATE/$name.pid"
@@ -513,14 +521,18 @@ _job_start() {
 # _job_end <name> - moves an ended job's file to ended/, where the chat can
 # still read it, and removes its state. As the Claude user: the folder is
 # that user's.
+#
+# When the file could not be moved, the job keeps its state and Home
+# Assistant is told nothing: the next tick tries again, and the job does not
+# run meanwhile.
 _job_end() {
   if as_claude mkdir -p -- "$HC_JOBS/ended" </dev/null >/dev/null 2>&1 \
      && as_claude mv -f -- "$HC_JOBS/$1.json" "$HC_JOBS/ended/$1.json" </dev/null >/dev/null 2>&1; then
     log "jobs: $1 has ended"
+    _job_forget "$1"
   else
-    log "jobs: $1 has ended, and its file could not be moved"
+    log "jobs: $1 has ended, and its file could not be moved; the next tick tries again"
   fi
-  _job_forget "$1"
 }
 
 # The day the add-on first saw each job is kept in HC_JOB_STATE/seen/<name>,
@@ -564,12 +576,20 @@ _jobs_prune_seen() {
 }
 
 # _jobs_order <today> - prints the job names, the first seen first, then by
-# name: the limit of enabled jobs refuses the newest.
+# name: the limit of enabled jobs refuses the newest. At most HC_JOB_FILES
+# of them, so a folder filled with files costs a tick no more than that;
+# the rest are skipped, with one line in the log.
+: "${HC_JOB_FILES:=32}"
 _jobs_order() {
-  local name
-  while read -r name; do
-    printf '%s %s\n' "$(_job_seen "$name" "$1")" "$name"
-  done < <(job_list) | sort | cut -d ' ' -f 2
+  local name all
+  all="$(while read -r name; do
+           printf '%s %s\n' "$(_job_seen "$name" "$1")" "$name"
+         done < <(job_list) | sort | cut -d ' ' -f 2)"
+  [[ -n "$all" ]] || return 0
+  if (( $(wc -l <<<"$all") > HC_JOB_FILES )); then
+    log "jobs: $(wc -l <<<"$all" | tr -d ' ') job files; only the first $HC_JOB_FILES are read"
+  fi
+  head -n "$HC_JOB_FILES" <<<"$all"
 }
 
 # _job_last_day <first-seen> - the last day a job may run, counted from the
@@ -589,6 +609,7 @@ jobs_tick() {
   local copy="$HC_STATE/job.in"
   local -a due=()
   mkdir -p "$HC_JOB_STATE"
+  jobs_tick_begin
   now="$(date +%s)"
   today="$(_job_date "$now" %F)" || return 0
   _jobs_reap
