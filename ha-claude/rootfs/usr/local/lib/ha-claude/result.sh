@@ -16,14 +16,17 @@
 # line; the line feed stays in the text only. The limits count characters,
 # after the cleaning. jq's message goes to standard error; the caller takes
 # from it only which check failed (_result_reason).
-_result_body() {
-  # shellcheck disable=SC2016  # jq's variables, not the shell's
-  jq -cen --arg agent "$1" --arg time "$(date +%FT%T%z)" '
+# The cleaning, in jq, shared with the jobs' results.
+# shellcheck disable=SC2016  # jq's variables, not the shell's
+HC_JQ_CLEAN='
     def clean($nl): explode
       | map(select(((. >= 32 and . != 127 and (. < 128 or . > 159))
                     and (. < 8232 or . > 8238) and (. < 8294 or . > 8297))
                    or ($nl and . == 10)))
-      | implode;
+      | implode;'
+_result_body() {
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  jq -cen --arg agent "$1" --arg time "$(date +%FT%T%z)" "$HC_JQ_CLEAN"'
     [inputs] | if length != 1 then error("shape") else .[0] end
     | if type != "object" or (keys != ["count", "text", "verdict"]) then error("shape") else . end
     | if (.count | type) != "number" or (.count | tojson | test("^(0|[1-9][0-9]{0,3})$") | not)
@@ -59,6 +62,34 @@ clear_result() {
   as_claude rm -f -- "$HC_RESULTS/$1.json" </dev/null >/dev/null 2>&1 || true
 }
 
+# claude_copy <file> <copy> <bytes> <seconds> [tail] - copies a file the Claude
+# user may swap at any moment into a file only root can reach, the way
+# publish_result explains below: the Claude user reads it, with a time limit,
+# and no more than one byte over the size cap. Returns 0 with the copy, 1
+# when it could not be read in time (the copy is removed) and 2 when it is
+# larger than the cap (the copy is removed). With tail, the copy is the
+# file's last <bytes> bytes, and a larger file is not refused.
+claude_copy() {
+  local file="$1" copy="$2" bytes="$3" wait_s="$4" size rc=0
+  local -a reader=(head -c "$((bytes + 1))")
+  [[ "${5:-}" == tail ]] && reader=(tail -c "$bytes")
+  rm -f "$copy"
+  ( umask 077; : > "$copy" )
+  as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$wait_s" \
+    "${reader[@]}" -- "$file" </dev/null >>"$copy" 2>/dev/null &
+  wait $! || rc=$?
+  if (( rc != 0 )); then
+    rm -f "$copy"
+    return 1
+  fi
+  size="$(wc -c < "$copy")"
+  if (( size > bytes )); then
+    rm -f "$copy"
+    return 2
+  fi
+  return 0
+}
+
 # publish_result <agent> <marker> - raises the agent's result file as the
 # event ha_claude_result. Returns 1, with one fixed reason in the log, when
 # the file is missing, older than the marker, cannot be read in time, is too
@@ -74,7 +105,7 @@ clear_result() {
 # signal is handled at once.
 publish_result() {
   local agent="$1" marker="$2" file="$HC_RESULTS/$1.json"
-  local copy="$HC_STATE/result.in" body="$HC_STATE/result.body" size rc=0
+  local copy="$HC_STATE/result.in" body="$HC_STATE/result.body" rc=0
   local err="$HC_STATE/result.err"
   if [[ ! -e "$file" ]]; then
     log "result: $agent: missing"
@@ -85,19 +116,12 @@ publish_result() {
     return 1
   fi
   mkdir -p "$HC_STATE"
-  rm -f "$copy" "$body" "$err"
-  ( umask 077; : > "$copy" )
-  as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$HC_RESULT_WAIT" \
-    head -c "$((HC_RESULT_BYTES + 1))" -- "$file" </dev/null >>"$copy" 2>/dev/null &
-  wait $! || rc=$?
-  if (( rc != 0 )); then
-    rm -f "$copy"
+  rm -f "$body" "$err"
+  claude_copy "$file" "$copy" "$HC_RESULT_BYTES" "$HC_RESULT_WAIT" || rc=$?
+  if (( rc == 1 )); then
     log "result: $agent: unreadable"
     return 1
-  fi
-  size="$(wc -c < "$copy")"
-  if (( size > HC_RESULT_BYTES )); then
-    rm -f "$copy"
+  elif (( rc != 0 )); then
     log "result: $agent: too large"
     return 1
   fi

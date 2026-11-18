@@ -41,6 +41,9 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `morning_max_turns` | The most steps Claude may take in a morning run |
 | `run_timeout` | The longest a run started with the `run` command may take, in seconds |
 | `run_max_turns` | The most steps Claude may take in such a run |
+| `jobs_parallel` | The most jobs that run at once, 1 to 10; 3 by default. See "Jobs" |
+| `job_timeout` | The longest a job's run may take, in seconds; 1800 by default |
+| `job_max_turns` | The most steps Claude may take in a job's run; 60 by default |
 | `morning_chat` | On (the default): after the `morning` command the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
 | `chat_resume` | Off (the default): every start of the chat is a new conversation. On: the chat continues its last conversation after a `sync`, a `restart-chat` and a start of the add-on, so it is ended by `clear-chat`, `/clear` and the morning's opening. See "Keeping the conversation", which also covers the one case where a cleared conversation can come back |
 
@@ -62,6 +65,7 @@ Send one of these with Home Assistant's add-on stdin action:
 | `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
 | `memory` | Writes the chat's memory to the add-on's log. See "The memory" |
+| `jobs tick` | Checks the job files and starts the jobs that are due, in the background, and returns at once. Raises no event. See "Jobs" |
 
 Every command raises the event `ha_claude_outcome` with `command` and
 `outcome` in its data. For `restart-chat` and `clear-chat` the outcome is
@@ -140,7 +144,12 @@ On the command `morning` the add-on runs Claude Code once, without a
 terminal, as the agent `morning-briefing` from the working folder, with the
 turn limit and the time limit from the options and with automatic memory off.
 The run is told today's date and the path of today's handover file,
-`/data/handover/YYYY-MM-DD.md`, and is expected to write that file.
+`/data/handover/YYYY-MM-DD.md`, and is expected to write that file. When
+jobs have a result file, the prompt also has one line naming them,
+`Jobs: <name>, <name> (old), ...`, where `(old)` marks a result from before
+the job's last run, or of a job that is off. Only the names go into the
+prompt, nothing of the files' content; the agent reads the results in
+`/data/results/jobs/` itself.
 
 A run without a terminal cannot ask for permission: a tool that the working
 folder's settings do not allow is refused. Give the agent a tool list that
@@ -252,6 +261,112 @@ recorder.
 A run started with `run` must leave a result to be `ok`. The morning run may
 leave one as `morning-briefing.json`; it is raised when the run is `ok` and
 the file is good, and the run's outcome does not depend on it.
+
+## Jobs
+
+A job is a task for Claude on a schedule, as a file
+`/data/jobs/<name>.json` that Claude writes. The name is a lowercase letter
+followed by at most 31 lowercase letters, digits or `-`. Home Assistant
+keeps the clock: an automation sends `jobs tick`, every 15 minutes for
+example, and on each tick the add-on reads the files, checks them and
+starts the jobs that are due.
+
+| Field | Holds |
+|---|---|
+| `type` | `private`, `web` or `all`: the job runs as the agent `job-<type>` of the working folder |
+| `task` | The task, as text, at most 4000 characters |
+| `schedule` | `{"time": "HH:MM", "days": [...]}`, local time, `days` from `mon` to `sun` and every day when left out; or `{"every_hours": N}`, N from 4 to 24 |
+| `end` | The last day it runs, `YYYY-MM-DD`, at most 28 days after `created` |
+| `enabled` | `true` or `false` |
+| `notify` | Optional. The condition, in words, under which the run sets `notify` in its result, at most 500 characters |
+| `created` | The day the file was first written, `YYYY-MM-DD` |
+
+The file is one JSON object, with no field written twice; no other field
+is accepted. A tick reads at most 32 job files, the ones the add-on saw
+first; the others are skipped, and the log says so. At most 10 jobs are enabled at once; an 11th is
+`invalid`, the one the add-on saw last. The add-on reads a file only
+through a copy the Claude user makes, within a few seconds and up to
+16 KiB, and keeps its own record of the day it first saw each job: the
+28 days count from that day too, so a `created` moved later does not
+stretch them, nor does moving the file away for a while: that record is
+kept until its 28 days are over. A job past its end, or seen more than 28 days ago, is moved
+to `/data/jobs/ended/`.
+
+A daily job runs once on each of its days, at the first tick after its
+time; a day the add-on was off is not made up. A job every N hours runs at
+the first tick N hours after its last run. At most `jobs_parallel` run at
+once; the others start at a later tick. A run is Claude Code once, without a
+terminal, from the working folder, with automatic memory off, no transcript
+kept, the time limit `job_timeout` and the turn limit `job_max_turns`. The
+prompt comes on standard input and holds today's date, the job's name, its
+result file `/data/results/jobs/<name>.json`, the `notify` condition and the
+task. Its environment holds `HA_CLAUDE_UNATTENDED` with the agent's name and
+`HA_CLAUDE_JOB` with the job's name, for the working folder's hooks. A job
+does not touch the chat or the handover.
+
+The result file has exactly three fields: `verdict` (one line, 120
+characters), `text` (4000 characters) and `notify` (`true` or `false`). It is
+checked as "The result file" describes, and not raised as an event. Unlike
+there, the last result is not removed before a run, so the agent can read
+it to compare; a result older than the run's start does not count.
+
+`sync` waits until the running jobs have ended, and none starts meanwhile,
+so no job runs under a working folder replaced halfway. When the add-on
+stops, the runs are stopped; at the next start a job that was running is
+`failed`.
+
+Each job's state, which only root can read, is in
+`/data/state/jobs/<name>.json`: `status` (`idle`, `running`, `ok`, `failed`,
+`timeout` or `invalid`), `error` (for `invalid` the check that failed:
+`shape`, `name`, `type`, `task`, `schedule`, `end`, `limit` or
+`unreadable`; for `failed`, `agent` when the working folder has no agent for
+the type, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
+`next_run` (seconds since 1970), and from the last good result `finding`
+(the verdict), `text`, `notify` and `notify_rose` (`notify` went from false
+to true). What Claude printed is kept in `/data/state/job-<name>.log`, left
+out of backups.
+
+### The jobs in Home Assistant
+
+The add-on asks the Supervisor for the MQTT broker (the service
+`mqtt:want`, which the Mosquitto add-on provides). Without a broker the
+add-on works as before: the job files are checked and their state kept, the
+log says once that there is no broker, and no job runs. The broker's login
+is written for root only into the MQTT clients' own config files, never on a
+command line.
+
+Each job is a device entity of "HA Claude jobs", made by MQTT discovery
+with retained messages under `homeassistant/<component>/ha_claude_job_<name>_<key>/config`.
+In these IDs and in the entity IDs a `-` in the job's name is written `_`
+(a name holds no `_`, so two jobs never share an ID); the topics under
+`ha_claude/jobs/<name>/` keep the name as it is.
+
+| Entity | Shows |
+|---|---|
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
+| `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
+| `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
+| `switch.ha_claude_job_<name>_enabled` | Turns the job on or off |
+
+The state is one retained JSON message on `ha_claude/jobs/<name>/state`,
+published after every change. Text in it is cleaned of control characters.
+When a job ends or its file is gone, its entities are removed with empty
+retained messages; a removal the broker did not take is tried again on
+every tick. At start every job is published again and the entities of jobs
+whose file has gone are removed. Each publish has 10 seconds; when one fails
+in a tick, the broker is taken as down for the rest of that tick and no job
+starts in it, so no job runs that Home Assistant does not show.
+
+The switch's commands arrive on `ha_claude/jobs/<name>/enabled/set`. Only
+`ON` or `OFF` is taken, only for an existing job file, and `ON` only while
+fewer than 10 other jobs are enabled. The add-on then changes `enabled` in
+the file and nothing else, as the Claude user. Retained commands are
+ignored.
+
+When a run's `notify` goes from false to true, the add-on raises the event
+`ha_claude_job_notify` with `job` and `finding`, once for that run: not
+again when the next run starts or fails.
 
 ## The report
 

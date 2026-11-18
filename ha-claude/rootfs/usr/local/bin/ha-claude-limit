@@ -6,14 +6,19 @@
 limit="$1"; shift
 grace="${HC_LIMIT_GRACE:-30}"
 # The command leads its own process group where that is possible, so that
-# what it started is stopped with it.
+# what it started is stopped with it. Its standard input is this script's:
+# bash would give a command started with & /dev/null instead, and a job's
+# prompt comes on standard input.
 if command -v setsid >/dev/null 2>&1; then
-  setsid "$@" &
+  setsid "$@" <&0 &
 else
-  "$@" &
+  "$@" <&0 &
 fi
 pid=$!
 stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
+# The watchdog writes here when the time ran out, so a command that ends by
+# itself need not wait for the watchdog's next second.
+flag="$(mktemp "${TMPDIR:-/tmp}/ha-claude-limit.XXXXXX" 2>/dev/null)" || flag=""
 (
   for (( i = 0; i < limit; i++ )); do
     kill -0 "$pid" 2>/dev/null || exit 0
@@ -22,6 +27,7 @@ stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }
   # The command ended by itself in the last second: that is not a timeout.
   # What it left behind is stopped all the same.
   kill -0 "$pid" 2>/dev/null || { stop TERM && sleep 1 && stop KILL; exit 0; }
+  [[ -n "$flag" ]] && echo timeout > "$flag"
   stop TERM || exit 0
   for (( i = 0; i < grace; i++ )); do
     # The command is gone; what it started may not be.
@@ -35,7 +41,16 @@ watchdog=$!
 wait "$pid"; status=$?
 # What the command started and left running is stopped with it.
 kill -KILL -- "-$pid" 2>/dev/null
-if wait "$watchdog"; then
+if [[ -n "$flag" && ! -s "$flag" ]]; then
+  # Ended in time: the watchdog is not needed any more.
+  kill "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  rm -f -- "$flag"
   exit "$status"
 fi
+if wait "$watchdog"; then
+  [[ -n "$flag" ]] && rm -f -- "$flag"
+  exit "$status"
+fi
+[[ -n "$flag" ]] && rm -f -- "$flag"
 exit 124

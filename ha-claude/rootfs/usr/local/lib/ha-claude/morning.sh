@@ -20,13 +20,45 @@ _morning_number() {
   printf '%s' "$value"
 }
 
+# _morning_jobs - prints one line naming the jobs that have a result file,
+# "Jobs: a, b (old)", or nothing when none has. A result is old when it is
+# from before the job's last run, or the job is off. Names only: nothing of
+# what a job file or a result holds goes into the prompt. A result file is
+# only looked at, never opened; the job file is read through the copy the
+# Claude user makes.
+_morning_jobs() {
+  local name file mtime last enabled copy="$HC_STATE/job-morning.in"
+  local -a items=()
+  declare -F job_list >/dev/null || return 0
+  while read -r name; do
+    file="$HC_JOB_RESULTS/$name.json"
+    [[ -f "$file" ]] || continue
+    mtime="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || continue
+    last="$(jq -r '.last_run // 0 | numbers' <<<"$(_job_state "$name")" 2>/dev/null)"
+    [[ "$last" =~ ^[0-9]+$ ]] || last=0
+    enabled=false
+    if job_read "$name" "$copy"; then
+      enabled="$(jq -rs 'if length == 1 then .[0].enabled == true else false end' "$copy" 2>/dev/null)"
+    fi
+    if [[ "$enabled" != true ]] || (( mtime < last )); then
+      items+=("$name (old)")
+    else
+      items+=("$name")
+    fi
+  done < <(job_list)
+  rm -f -- "$copy"
+  (( ${#items[@]} )) || return 0
+  local IFS=,
+  printf 'Jobs: %s' "${items[*]}" | sed 's/,/, /g'
+}
+
 # run_morning <variable> - runs the morning briefing and stores its outcome
 # in the named variable as one word: ok, failed, timeout or not_configured.
 # The outcome is not printed: a caller that captured it would hold back a
 # stop signal until the run had ended. The run's output can hold what the
 # agent read, so it goes to a file only root can read, not to the log.
 run_morning() {
-  local _rm_today _rm_file _rm_limit _rm_turns _rm_rc=0 _rm_started=$SECONDS
+  local _rm_today _rm_file _rm_limit _rm_turns _rm_rc=0 _rm_started=$SECONDS _rm_prompt _rm_jobs
   local _rm_marker="$HC_STATE/morning.started"
   if ! morning_configured; then
     printf -v "$1" '%s' not_configured
@@ -36,6 +68,9 @@ run_morning() {
   _rm_file="$HC_HANDOVER/$_rm_today.md"
   _rm_limit="$(_morning_number '.morning_timeout' 900)"
   _rm_turns="$(_morning_number '.morning_max_turns' 40)"
+  _rm_prompt="Today is $_rm_today. Today's handover file is $_rm_file. Do your morning run."
+  _rm_jobs="$(_morning_jobs)"
+  [[ -n "$_rm_jobs" ]] && _rm_prompt+=$'\n'"$_rm_jobs"
   mkdir -p "$HC_STATE"
   declare -F clean_handover >/dev/null && clean_handover
   declare -F clear_result >/dev/null && clear_result "$HC_MORNING_AGENT"
@@ -45,7 +80,7 @@ run_morning() {
   ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
       HA_CLAUDE_UNATTENDED="$HC_MORNING_AGENT" \
       "$HC_LIMIT_BIN" "$_rm_limit" "$HC_CLAUDE_BIN" \
-      -p "Today is $_rm_today. Today's handover file is $_rm_file. Do your morning run." \
+      -p "$_rm_prompt" \
       --agent "$HC_MORNING_AGENT" --max-turns "$_rm_turns" --permission-mode default \
       --no-session-persistence \
   ) </dev/null >>"$HC_STATE/morning.log" 2>&1 &

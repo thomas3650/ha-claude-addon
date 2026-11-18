@@ -4,7 +4,7 @@
 set -uo pipefail
 
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env layout sync managed retention diagnostics web session outcome morning result run report memory commands; do
+for f in paths log options env layout sync managed retention diagnostics web session outcome morning result run report memory jobs mqtt commands; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -32,6 +32,10 @@ start_ingress() {
 
 shutdown() {
   log "stopping"
+  # The jobs' runs, each with all it started. A runner may still write
+  # that its run failed; one that does not is failed at the next start.
+  jobs_stop
+  mqtt_listen_stop
   as_claude tmux -L "$HC_TMUX_SOCKET" kill-server 2>/dev/null || true
   # A morning run in progress, and anything else the Claude user runs.
   pkill -TERM -u "$HC_USER" 2>/dev/null || true
@@ -42,6 +46,12 @@ trap shutdown TERM INT
 
 resolve_tz
 ensure_layout
+# Before any tick: a job the last stop left running is failed.
+jobs_startup
+# The broker, when there is one: the jobs are published again, the gone
+# ones removed, and the listener for the switches starts. Without one, the
+# log says so once and no job runs.
+jobs_can_run || true
 install_extra_packages
 run_diagnostics
 sync_workspace

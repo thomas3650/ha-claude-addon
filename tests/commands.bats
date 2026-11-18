@@ -441,3 +441,73 @@ EOT
   handle_command 'sync'
   [ "$(tail -1 "$CALLS")" = "outcome sync failed" ]
 }
+
+stub_jobs() {
+  jobs_tick() { echo "tick" >> "$CALLS"; }
+  jobs_wait_idle() { echo "wait" >> "$CALLS"; }
+}
+
+@test "jobs tick ticks the jobs and reports nothing" {
+  load_lib options commands; stub_actions; stub_jobs
+  handle_command '"jobs tick"'
+  handle_command 'jobs tick'
+  handle_command '{"command":"jobs tick"}'
+  [ "$(cat "$CALLS")" = $'tick\ntick\ntick' ]
+}
+
+@test "jobs takes tick and nothing else" {
+  load_lib options commands; stub_actions; stub_jobs
+  for line in '"jobs"' 'jobs' '"jobs run"' '"jobs tick now"' '"tick"' '"jobs  tick"'; do
+    run handle_command "$line"
+    [ "$status" -eq 0 ]
+  done
+  [ ! -s "$CALLS" ]
+  [ -z "$(parse_command 'jobs foo')" ]
+  [ "$(parse_command 'jobs tick')" = "jobs tick" ]
+}
+
+@test "sync waits for the running jobs before it changes anything" {
+  load_lib options commands; stub_actions; stub_jobs
+  handle_command 'sync'
+  [ "$(cat "$CALLS")" = $'wait\nsync\nmanaged\nrestart\noutcome sync ok' ]
+}
+
+teardown() {
+  declare -F jobs_stop >/dev/null && jobs_stop
+  return 0
+}
+
+@test "jobs tick returns at once while jobs run, and sync waits for them and starts none" {
+  load_lib options env morning result jobs commands; stub_actions
+  mkdir -p "$HC_JOBS" "$HC_JOB_RESULTS" "$HC_JOB_STATE"
+  STUB="$BATS_TEST_TMPDIR/stub"
+  mkdir -p "$STUB" "$HC_WORKSPACE/.claude/agents"
+  touch "$HC_WORKSPACE/.claude/agents/job-web.md"
+  printf '#!/usr/bin/env bash\necho "$HA_CLAUDE_JOB $(date +%%s)" >> "%s/starts"\ncat >/dev/null\nsleep 3\nprintf %s > "%s/$HA_CLAUDE_JOB.json"\n' \
+    "$STUB" "'{\"verdict\":\"v\",\"text\":\"t\",\"notify\":false}'" "$HC_JOB_RESULTS" > "$STUB/claude"
+  chmod +x "$STUB/claude"
+  export HC_CLAUDE_BIN="$STUB/claude"
+  export HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
+  today="$(date +%F)"
+  end="$(jq -rn --arg d "$today" '$d | strptime("%Y-%m-%d") | mktime + 86400 | strftime("%Y-%m-%d")')"
+  job() {
+    jq -n --arg t "$today" --arg e "$end" \
+      '{type: "web", task: "t", schedule: {every_hours: 4}, end: $e, enabled: true, created: $t}' > "$HC_JOBS/$1.json"
+  }
+  job first
+  started=$SECONDS
+  handle_command '"jobs tick"'
+  (( SECONDS - started < 2 ))
+  [ "$(jobs_running)" = first ]
+  job second
+  handle_command 'sync'
+  synced=$(date +%s)
+  [ "$(jobs_running)" = "" ]
+  [ "$(wc -l < "$STUB/starts" | tr -d ' ')" -eq 1 ]
+  [ "$(jq -r .status "$HC_JOB_STATE/first.json")" = ok ]
+  grep -qx "sync" "$CALLS"
+  handle_command '"jobs tick"'
+  jobs_wait_idle
+  second_start="$(awk '$1 == "second" {print $2}' "$STUB/starts")"
+  (( second_start >= synced ))
+}

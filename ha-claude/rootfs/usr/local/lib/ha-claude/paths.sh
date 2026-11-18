@@ -12,3 +12,6 @@
 : "${HC_USER:=claude}"
 : "${HC_MANAGED_DIR:=/etc/claude-code}"
 : "${HC_SESSION_MARK:=$HC_HOME/.cache/ha-claude/session-mark}"
+: "${HC_JOBS:=$HC_DATA/jobs}"
+: "${HC_JOB_RESULTS:=$HC_RESULTS/jobs}"
+: "${HC_JOB_STATE:=$HC_STATE/jobs}"
