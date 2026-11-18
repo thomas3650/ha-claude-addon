@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.16.0...v0.17.0) (2026-11-18)
+
+
+### Features
+
+* fixed jobs: the runs Home Assistant starts, shown as jobs ([#60](https://github.com/thomas3650/ha-claude-addon/issues/60)) ([efb67ea](https://github.com/thomas3650/ha-claude-addon/commit/efb67ea8f1e32c61b3f980708ce586d1e1fc5885))
+
 ## [0.16.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.15.2...v0.16.0) (2026-11-18)
 
 
