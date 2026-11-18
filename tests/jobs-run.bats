@@ -471,7 +471,6 @@ fixed_job() {
   [ "$(state alpha-run .error)" = null ]
   next="$(state alpha-run .next_run)"
   [[ "$next" =~ ^[0-9]+$ ]]
-  (( next > $(date +%s) - 86400 && next <= $(date +%s) + 8 * 86400 ))
   [ "$(_job_date "$next" %H:%M)" = 06:30 ]
   [ -z "$(jobs_running)" ]
   [ ! -e "$STUB/starts" ]
@@ -550,4 +549,29 @@ fixed_job() {
   kill $! 2>/dev/null || true
   [ "$(state alpha-run .status)" = running ]
   [ "$(state alpha-run .next_run)" = 7 ]
+}
+
+@test "a fixed job's next run is today's time before it, tomorrow's after it ran" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  job="$(fixed_check alpha-run "$HC_WORKSPACE/jobs/alpha-run.json")"
+  [ "$(job_next "$job" '{}' "$(_job_epoch "$TODAY" 05:00)")" = "$(_job_epoch "$TODAY" 06:30)" ]
+  state_json="$(jq -nc --argjson l "$(_job_epoch "$TODAY" 06:30)" '{last_run: $l}')"
+  [ "$(job_next "$job" "$state_json" "$(_job_epoch "$TODAY" 07:00)")" = "$(_job_epoch "$(days_after "$TODAY" 1)" 06:30)" ]
+  off="$(jq -c '.enabled = false' <<<"$job")"
+  [ "$(job_next "$off" '{}' "$(_job_epoch "$TODAY" 05:00)")" = null ]
+}
+
+@test "a fixed job whose placed copy is missing keeps its state and is invalid" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  rm "$HC_JOBS/alpha-run.json"
+  jq -n '{status: "ok", last_run: 5}' > "$HC_JOB_STATE/alpha-run.json"
+  jobs_tick
+  [ "$(state alpha-run .status)" = invalid ]
+  [ "$(state alpha-run .error)" = unreadable ]
+  [ "$(state alpha-run .last_run)" = 5 ]
+  [ "$(grep -cx alpha-run "$CHANGES")" -eq 1 ]
 }

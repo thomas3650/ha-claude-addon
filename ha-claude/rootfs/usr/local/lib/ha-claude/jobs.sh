@@ -645,6 +645,8 @@ jobs_tick() {
     [[ -f "$file" ]] || continue
     name="${file##*/}"; name="${name%.json}"
     [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]] && continue
+    # A fixed job's state is its own check's, also while its copy is missing.
+    declare -F fixed_is >/dev/null && fixed_is "$name" && continue
     [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name" && continue
     _job_forget "$name"
   done
