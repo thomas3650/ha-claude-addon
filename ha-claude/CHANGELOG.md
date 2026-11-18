@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.15.2...v0.16.0) (2026-11-18)
+
+
+### Features
+
+* jobs: scheduled agent runs from a jobs folder, shown in Home Assistant through MQTT ([#58](https://github.com/thomas3650/ha-claude-addon/issues/58)) ([f1a79d7](https://github.com/thomas3650/ha-claude-addon/commit/f1a79d77f9ee61ae545881a57981f62878538d78))
+
 ## [0.15.2](https://github.com/thomas3650/ha-claude-addon/compare/v0.15.1...v0.15.2) (2026-11-12)
 
 
