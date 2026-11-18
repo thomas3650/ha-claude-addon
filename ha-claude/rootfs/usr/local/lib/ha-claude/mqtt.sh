@@ -78,6 +78,14 @@ jobs_can_run() {
   return 0
 }
 
+# _mqtt_id <name> - the job's name as it is written in object IDs, unique
+# IDs and entity IDs, which take no hyphen: with an underscore. A job name
+# holds no underscore, so two names never meet in one ID. The topics under
+# ha_claude/jobs keep the name itself.
+_mqtt_id() {
+  printf '%s' "${1//-/_}"
+}
+
 # _mqtt_send <topic> [file] - publishes the file's content on the topic,
 # retained; without a file, an empty retained message, which removes it.
 _mqtt_send() {
@@ -119,7 +127,7 @@ _mqtt_calls() {
 
 # mqtt_publish_job <name> - publishes the job's entities and its state.
 mqtt_publish_job() {
-  local name="$1" e comp key cfg="$HC_STATE/job-$1.mqtt" job="$HC_STATE/job-$1.file"
+  local name="$1" e comp key id cfg="$HC_STATE/job-$1.mqtt" job="$HC_STATE/job-$1.file"
   local calls="$HC_STATE/job-$1.callsj" state="$HC_STATE/job-$1.statej" topic="$HC_MQTT_PREFIX/$1/state"
   job_name_ok "$name" || return 0
   mqtt_known || return 0
@@ -136,10 +144,10 @@ mqtt_publish_job() {
     _mqtt_calls "$name" "$calls"
   )
   for e in "${HC_MQTT_ENTITIES[@]}"; do
-    comp="${e%%/*}"; key="${e#*/}"
+    comp="${e%%/*}"; key="${e#*/}"; id="$(_mqtt_id "$name")"
     # shellcheck disable=SC2016  # jq's variables and Home Assistant's templates
-    ( umask 077; jq -cn --arg name "$name" --arg comp "$comp" --arg key "$key" --arg topic "$topic" '
-        ("ha_claude_job_\($name)_\($key)") as $id
+    ( umask 077; jq -cn --arg name "$name" --arg idname "$id" --arg comp "$comp" --arg key "$key" --arg topic "$topic" '
+        ("ha_claude_job_\($idname)_\($key)") as $id
         | {name: "\($name) \($key | gsub("_"; " "))", unique_id: $id, default_entity_id: "\($comp).\($id)",
            state_topic: $topic,
            device: {identifiers: ["ha_claude_jobs"], name: "HA Claude jobs"}}
@@ -158,7 +166,7 @@ mqtt_publish_job() {
              payload_on: "ON", payload_off: "OFF", state_on: "ON", state_off: "OFF"}
           end
       ' > "$cfg" )
-    _mqtt_send "homeassistant/$comp/ha_claude_job_${name}_$key/config" "$cfg"
+    _mqtt_send "homeassistant/$comp/ha_claude_job_${id}_$key/config" "$cfg"
   done
   ( umask 077; jq -cn --slurpfile j "$job" --slurpfile s "$state" --slurpfile c "$calls" "$HC_JQ_CLEAN"'
       def time: if type == "number" then todate else null end;
@@ -183,7 +191,7 @@ mqtt_remove_job() {
   job_name_ok "$1" || return 0
   mqtt_known || return 0
   for e in "${HC_MQTT_ENTITIES[@]}"; do
-    _mqtt_send "homeassistant/${e%%/*}/ha_claude_job_${1}_${e#*/}/config"
+    _mqtt_send "homeassistant/${e%%/*}/ha_claude_job_$(_mqtt_id "$1")_${e#*/}/config"
   done
   _mqtt_send "$HC_MQTT_PREFIX/$1/state"
   _mqtt_published remove "$1"

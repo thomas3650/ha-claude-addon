@@ -330,7 +330,10 @@ is written for root only into the MQTT clients' own config files, never on a
 command line.
 
 Each job is a device entity of "HA Claude jobs", made by MQTT discovery
-with retained messages under `homeassistant/<component>/ha_claude_job_<name>_<key>/config`:
+with retained messages under `homeassistant/<component>/ha_claude_job_<name>_<key>/config`.
+In these IDs and in the entity IDs a `-` in the job's name is written `_`
+(a name holds no `_`, so two jobs never share an ID); the topics under
+`ha_claude/jobs/<name>/` keep the name as it is.
 
 | Entity | Shows |
 |---|---|

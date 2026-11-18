@@ -332,3 +332,25 @@ msg() { cat "$PUB/$(tr '/' '_' <<<"$1")"; }
   grep -q ' jobs mqtt commands; do' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
   grep -qx '  mqtt_listen_stop' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
 }
+
+@test "a name with a hyphen is written with an underscore in the IDs, and kept in the topics of its own" {
+  load_mqtt
+  mqtt_config
+  # A job name holds no underscore, so two names never meet in one ID.
+  run job_name_ok a_b
+  [ "$status" -eq 1 ]
+  job_file my-job
+  mqtt_publish_job my-job
+  cfg="homeassistant/sensor/ha_claude_job_my_job_status/config"
+  [ "$(msg "$cfg" | jq -r .unique_id)" = ha_claude_job_my_job_status ]
+  [ "$(msg "$cfg" | jq -r .default_entity_id)" = sensor.ha_claude_job_my_job_status ]
+  [ "$(msg "$cfg" | jq -r .state_topic)" = ha_claude/jobs/my-job/state ]
+  [ "$(msg homeassistant/switch/ha_claude_job_my_job_enabled/config | jq -r .command_topic)" = ha_claude/jobs/my-job/enabled/set ]
+  run grep "ha_claude_job_my-job" "$PUB/all"
+  [ "$status" -eq 1 ]
+  : > "$PUB/all"
+  rm "$HC_JOBS/my-job.json"
+  jobs_on_change my-job
+  grep -q $'\t'homeassistant/switch/ha_claude_job_my_job_enabled/config'$' "$PUB/all"
+  grep -q $'\t'ha_claude/jobs/my-job/state'$' "$PUB/all"
+}
