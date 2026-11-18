@@ -172,7 +172,8 @@ copy_with() {
 @test "fixed_place does not place a file the working folder's own check refuses" {
   fixed_setup
   jq -c '.run_by = "jobs"' "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
-  fixed_place
+  run fixed_place
+  [ "$status" -eq 1 ]
   [ ! -e "$HC_JOBS/alpha-run.json" ]
 }
 
@@ -182,4 +183,61 @@ copy_with() {
   fixed_place
   [ ! -L "$HC_JOBS/alpha-run.json" ]
   [ "$(jq -cS . "$HC_JOBS/alpha-run.json")" = "$(jq -cS . <<<"$ALPHA")" ]
+}
+
+@test "a chat file that could not be moved is not taken for a fixed one at the next placing" {
+  fixed_setup
+  jq -n '{type: "web", task: "Find a kettle.", schedule: {every_hours: 4}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' \
+    > "$HC_JOBS/alpha-run.json"
+  # The move fails: the first placing leaves the chat file and does not list the name.
+  as_claude() { printf '%s\n' "$*" >> "$AS"; [[ "$1" == mv ]] && return 1; "$@"; }
+  run fixed_place
+  [ "$status" -eq 1 ]
+  [ "$(jq -r .type "$HC_JOBS/alpha-run.json")" = web ]
+  if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
+  # The next placing moves it, as it still is a chat file.
+  as_claude() { printf '%s\n' "$*" >> "$AS"; "$@"; }
+  fixed_place
+  [ "$(jq -r .type "$HC_JOBS/ended/alpha-run.json")" = web ]
+  [ "$(jq -r .agent "$HC_JOBS/alpha-run.json")" = alpha-run ]
+}
+
+@test "a name whose repo file is refused is not listed as placed" {
+  fixed_setup
+  jq -c '.run_by = "jobs"' "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
+  jq -n '{type: "web", task: "T", schedule: {time: "05:00"}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/alpha-run.json"
+  run fixed_place
+  [ "$status" -eq 1 ]
+  if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
+  [ "$(jq -r .type "$HC_JOBS/alpha-run.json")" = web ]
+}
+
+@test "a placed file that cannot be removed keeps its name, state and entities" {
+  fixed_setup
+  fixed_place
+  printf '{"status":"ok"}\n' > "$HC_JOB_STATE/alpha-run.json"
+  : > "$HOOK"
+  rm "$HC_WORKSPACE/jobs/alpha-run.json"
+  as_claude() { printf '%s\n' "$*" >> "$AS"; [[ "$1" == rm ]] && return 1; "$@"; }
+  run fixed_place
+  [ "$status" -eq 1 ]
+  [ -f "$HC_JOBS/alpha-run.json" ]
+  [ -f "$HC_JOB_STATE/alpha-run.json" ]
+  grep -qx alpha-run "$HC_JOB_STATE/fixed.list"
+  [ ! -s "$HOOK" ]
+  # Once rm works, the next placing removes it all.
+  as_claude() { printf '%s\n' "$*" >> "$AS"; "$@"; }
+  fixed_place
+  [ ! -e "$HC_JOBS/alpha-run.json" ]
+  [ ! -e "$HC_JOB_STATE/alpha-run.json" ]
+  if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
+}
+
+@test "a directory under a fixed name is not reported as placed" {
+  fixed_setup
+  mkdir "$HC_JOBS/alpha-run.json"
+  run fixed_place
+  [ "$status" -eq 1 ]
+  [ -z "$(ls -A "$HC_JOBS/alpha-run.json")" ]
+  if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
 }

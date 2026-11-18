@@ -134,7 +134,9 @@ fixed_check() {
 # What it writes comes on standard input, from a file of root's.
 _fixed_write() {
   # shellcheck disable=SC2016  # the inner shell's arguments, not this one's
-  as_claude sh -c 'cat > "$1.new" && mv -f "$1.new" "$1"' sh "$HC_JOBS/$1.json" < "$2" >/dev/null 2>&1
+  # A directory under the name would take the file in: it is refused.
+  as_claude sh -c '[ ! -d "$1" ] && cat > "$1.new" && mv -f "$1.new" "$1"' sh "$HC_JOBS/$1.json" < "$2" >/dev/null 2>&1 \
+    && [[ -f "$HC_JOBS/$1.json" && ! -L "$HC_JOBS/$1.json" ]]
 }
 
 # _fixed_place_one <name> <previous-list-file> - places one name's file.
@@ -147,7 +149,7 @@ _fixed_place_one() {
   if ! word="$(_fixed_normal "$name" "$repo")"; then
     log "fixed: $name is not placed: the file in the working folder is refused ($word)"
     rm -f -- "$copy"
-    return 0
+    return 2
   fi
   if [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]]; then
     live=1
@@ -196,28 +198,45 @@ _fixed_place_one() {
   jobs_on_change "$name"
 }
 
-# _fixed_place - the placing, under the lock.
+# _fixed_place - the placing, under the lock. The new list holds only the
+# names the add-on can vouch for: placed or found right, and any it had
+# before whose placing or removal failed now. A name that is not on it is
+# judged by its file at the next placing, so a chat file whose move failed is
+# not taken for a fixed one.
 _fixed_place() {
-  local list="$HC_JOB_STATE/fixed.list" known name rc=0
+  local list="$HC_JOB_STATE/fixed.list" known kept name rc=0
   mkdir -p "$HC_JOB_STATE" "$HC_STATE"
   known="$(mktemp "$HC_STATE/job-fixed.XXXXXX")" || return 1
+  kept="$(mktemp "$HC_STATE/job-fixed.XXXXXX")" || { rm -f -- "$known"; return 1; }
   [[ -f "$list" ]] && cat "$list" > "$known" 2>/dev/null
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
-    _fixed_place_one "$name" "$known" || rc=1
+    if _fixed_place_one "$name" "$known"; then
+      printf '%s\n' "$name" >> "$kept"
+    else
+      rc=1
+      grep -qx -- "$name" "$known" && printf '%s\n' "$name" >> "$kept"
+    fi
   done < <(fixed_list)
   # A name placed before whose file in the working folder has gone: its
   # placed file is deleted, not moved to ended/, as it holds nothing of the
-  # chat's, and its state and entities go.
+  # chat's, and its state and entities go. When the file stays, nothing is
+  # forgotten and the name is kept, so the next placing tries again.
   while IFS= read -r name; do
     job_name_ok "$name" || continue
     fixed_is "$name" && continue
     as_claude rm -f -- "$HC_JOBS/$name.json" </dev/null >/dev/null 2>&1 || true
+    if [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]]; then
+      log "fixed: $name is gone from the working folder, and its job could not be removed; the next placing tries again"
+      printf '%s\n' "$name" >> "$kept"
+      rc=1
+      continue
+    fi
     log "fixed: $name is gone from the working folder; its job is removed"
     _job_forget "$name"
   done < "$known"
-  ( umask 077; fixed_list > "$list.tmp" ) && mv -f "$list.tmp" "$list"
-  rm -f -- "$known"
+  ( umask 077; sort -u "$kept" > "$list.tmp" ) && mv -f "$list.tmp" "$list"
+  rm -f -- "$known" "$kept"
   return "$rc"
 }
 
