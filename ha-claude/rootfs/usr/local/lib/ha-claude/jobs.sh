@@ -158,9 +158,26 @@ _job_epoch() {
   printf '%s\n' "$((midnight + 10#$h * 3600 + 10#$m * 60))"
 }
 
+# _job_repo_limit <job-json> - the time limit of a file from the repo's run,
+# in seconds: its timeout, or the option run_timeout (900 when unset).
+_job_repo_limit() {
+  local limit
+  limit="$(jq -r '.timeout // empty' <<<"$1")"
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit="$(opt '.run_timeout' 900)"
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=900
+  printf '%s\n' "$limit"
+}
+
+# One tick's length: Home Assistant sends the tick every 15 minutes.
+HC_JOB_TICK=900
+
 # _job_fields <job-json> <state-json> - sets enabled, end, time, every,
-# days, last and status for the caller, from the job and its state. A job
-# never run has last -1.
+# days, last, status, missed and window for the caller, from the job and
+# its state. A job never run has last -1; missed is the slot last raised as
+# missed, or -1. window is 0 for a chat's job; for a file from the repo it
+# is the run's limit plus one tick, the time after its slot in which it may
+# still start. A file from the repo is told by its normal form, which has
+# run_by (null or not); a chat's normal form never has it.
 _job_fields() {
   local fields
   # On standard input, not as arguments: the job holds the task and the
@@ -169,11 +186,28 @@ _job_fields() {
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   fields="$(jq -rs '.[0] as $j | .[1] as $s |
     [$j.enabled, $j.end, ($j.schedule.time // ""), ($j.schedule.every_hours // 0),
-     (($j.schedule.days // []) | join(",")), ($s.last_run // -1), ($s.status // "idle")]
+     (($j.schedule.days // []) | join(",")), ($s.last_run // -1), ($s.status // "idle"),
+     ($s.missed // -1), ($j | has("run_by"))]
     | map(tostring) | join("|")
   ' <<<"$1"$'\n'"$2")" || return 1
   # A separator that is not white space: read would run empty fields together.
-  IFS='|' read -r enabled end time every days last status <<<"$fields"
+  IFS='|' read -r enabled end time every days last status missed window <<<"$fields"
+  [[ "$last" =~ ^-?[0-9]+$ ]] || last=-1
+  [[ "$missed" =~ ^-?[0-9]+$ ]] || missed=-1
+  if [[ "$window" == true ]]; then
+    window=$(( $(_job_repo_limit "$1") + HC_JOB_TICK ))
+  else
+    window=0
+  fi
+}
+
+# _job_days_from <YYYY-MM-DD> <from> <to> - prints "date weekday" for the
+# days from..to after the date (negative is before), by the calendar, so a
+# day of 23 or 25 hours does not skip or repeat one.
+_job_days_from() {
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  jq -rn --arg d "$1" --argjson a "$2" --argjson b "$3" \
+    '$d | strptime("%Y-%m-%d") | mktime as $t | range($a; $b + 1) | $t + . * 86400 | strftime("%Y-%m-%d %u")'
 }
 
 # job_due <job-json> <state-json> <now-epoch> - returns 0 when the job is
@@ -182,9 +216,17 @@ _job_fields() {
 # add-on missed is not made up. A job every few hours is due that many hours
 # after its last run, less a minute, so a tick a few seconds early does not
 # put it off by a whole tick.
+#
+# A file from the repo is due only within its window: from its time until
+# its limit and one tick later. The day is the time's own: yesterday's time
+# is still due while its window lasts, so a run at 23:45 that a late tick
+# puts past midnight still starts. After the window the day is skipped. A
+# run before the time (a command's) does not count: the time is due when
+# last_run is before it.
 job_due() {
-  local job="$1" state="$2" now="$3" today weekday slot
-  local enabled end time every days last status
+  local job="$1" state="$2" now="$3" today weekday slot day
+  local enabled end time every days last status missed window
+  local -a names=(mon tue wed thu fri sat sun)
   _job_fields "$job" "$state" || return 1
   [[ "$enabled" == true && "$status" != running ]] || return 1
   today="$(_job_date "$now" %F)" || return 1
@@ -193,19 +235,59 @@ job_due() {
     (( last < 0 || now - last > every * 3600 - 60 ))
     return
   fi
+  if (( window > 0 )); then
+    while read -r day weekday; do
+      [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
+      slot="$(_job_epoch "$day" "$time")" || continue
+      (( now >= slot && now < slot + window && last < slot )) && return 0
+    done < <(_job_days_from "$today" -1 0)
+    return 1
+  fi
   weekday="$(_job_date "$now" %u)" || return 1
-  local -a names=(mon tue wed thu fri sat sun)
   [[ ",$days," == *",${names[weekday - 1]},"* ]] || return 1
   slot="$(_job_epoch "$today" "$time")" || return 1
   (( now >= slot && last < slot ))
 }
 
+# job_missed <job-json> <state-json> <now-epoch> - prints the slot of a file
+# from the repo with run_by jobs whose window ended within the last tick
+# without its run starting, and returns 0; returns 1 otherwise. Only while
+# the job is on and not running, and once for a slot (the state's missed).
+# Only the tick at the window's end raises it: no tick comes while the
+# pause is on, and a window that ended before the add-on started, before
+# the switch went on or before the pause was lifted is not missed. A run
+# that started and was failed (by a restart) set last_run: it is not
+# missed. A file run by an automation is the automation's to watch.
+job_missed() {
+  local job="$1" state="$2" now="$3" today weekday slot day close
+  local enabled end time every days last status missed window
+  local -a names=(mon tue wed thu fri sat sun)
+  _job_fields "$job" "$state" || return 1
+  [[ "$enabled" == true && "$status" != running ]] || return 1
+  (( window > 0 && every == 0 )) || return 1
+  [[ "$(jq -r '.run_by' <<<"$job")" == jobs ]] || return 1
+  today="$(_job_date "$now" %F)" || return 1
+  while read -r day weekday; do
+    [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
+    slot="$(_job_epoch "$day" "$time")" || continue
+    close=$((slot + window))
+    if (( now >= close && now < close + HC_JOB_TICK && last < slot && missed != slot )); then
+      printf '%s\n' "$slot"
+      return 0
+    fi
+  done < <(_job_days_from "$today" -1 0)
+  return 1
+}
+
 # job_next <job-json> <state-json> <now-epoch> - prints when the job runs
 # next as an epoch, or null when it does not: disabled, or the next time is
-# past its end. A job that is due now prints the time it became due.
+# past its end. A job that is due now prints the time it became due. For a
+# file from the repo a time whose window has passed is skipped, so its next
+# run is never a time it will not start at; a run before the time does not
+# count as the time's.
 job_next() {
-  local job="$1" state="$2" now="$3" today day weekday slot next=""
-  local enabled end time every days last status
+  local job="$1" state="$2" now="$3" today day weekday slot next="" from=0
+  local enabled end time every days last status missed window
   local -a names=(mon tue wed thu fri sat sun)
   _job_fields "$job" "$state" || { echo null; return 0; }
   [[ "$enabled" == true ]] || { echo null; return 0; }
@@ -214,12 +296,14 @@ job_next() {
     if (( last < 0 )); then next="$now"; else next=$((last + every * 3600)); fi
   else
     # Today and the seven days after it: one of them is on the job's days.
+    # A file from the repo also looks at yesterday's, while its window lasts.
+    (( window > 0 )) && from=-1
     while read -r day weekday; do
       [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
       slot="$(_job_epoch "$day" "$time")" || continue
+      (( window > 0 && slot + window <= now )) && continue
       if (( slot > last )); then next="$slot"; break; fi
-    done < <(jq -rn --arg d "$today" \
-               '$d | strptime("%Y-%m-%d") | mktime as $t | range(0; 8) | $t + . * 86400 | strftime("%Y-%m-%d %u")')
+    done < <(_job_days_from "$today" "$from" 7)
   fi
   # An end of null is no end: a fixed job's normal form has it.
   if [[ -z "$next" || ( "$end" != null && "$(_job_date "$next" %F)" > "$end" ) ]]; then
@@ -235,7 +319,9 @@ job_next() {
 #                   invalid), error (why it is invalid or failed, one word),
 #                   last_run, last_end and next_run (epochs or null), notify,
 #                   notify_rose (notify went from false to true in the last
-#                   run), finding (the result's verdict) and text
+#                   run), finding (the result's verdict) and text, and for a
+#                   file from the repo missed (the last slot raised as
+#                   missed, job_missed)
 #   <name>.pid      the runner's PID while a run is on
 #   <name>.started  made when the run starts; the result must not be older
 #   <name>.limit    the run's time limit, in seconds, for sync's wait
@@ -591,7 +677,7 @@ _job_run() {
   # A file from the repo whose context names the handover must have written
   # today's handover file since it started, and its result as well.
   elif jq -e '(.context // []) | index("handover")' <<<"$job" >/dev/null 2>&1 \
-       && ! [[ -s "$handover" && ! "$handover" -ot "$marker" ]]; then
+       && ! [[ -s "$handover" && ! -L "$handover" && ! "$handover" -ot "$marker" ]]; then
     log "jobs: $name: today's handover file was not written"
     status=failed
   else
@@ -664,8 +750,7 @@ _job_start() {
   fi
   declare -F fixed_is >/dev/null && fixed_is "$name" && repo=true
   if [[ "$repo" == true ]]; then
-    limit="$(jq -r '.timeout // empty' <<<"$job")"
-    [[ "$limit" =~ ^[0-9]+$ ]] || limit="$(_morning_number '.run_timeout' 900)"
+    limit="$(_job_repo_limit "$job")"
     turns="$(jq -r '.max_turns // empty' <<<"$job")"
     [[ "$turns" =~ ^[0-9]+$ ]] || turns="$(_morning_number '.run_max_turns' 60)"
     # The tool calls are marked with the job only when the policy asks.
@@ -707,6 +792,8 @@ _job_start() {
 job_command() {
   local name="$1" command copy="$HC_STATE/job-command.in" job
   command="$(job_outcome_command "$name")"
+  # The outcome's agent is the name: a file from the repo is named after its
+  # agent, which fixed_check holds it to (the word agent otherwise).
   if [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name"; then
     log "jobs: $name runs already; it is not started again"
     raise_outcome "$command" running "$name" command
@@ -813,11 +900,12 @@ _job_last_day() {
 # status of its own (ok, failed, timeout, running), invalid with the word
 # fixed_check gave, and its next run. A file with run_by jobs that is due is
 # started, whatever the places and whether or not Home Assistant can see
-# the jobs; one with run_by automation is another's to start. It does not
-# end.
+# the jobs, and one whose window ended unstarted at this tick raises the
+# outcome missed (job_missed); one with run_by automation is another's to
+# start. It does not end.
 # shellcheck disable=SC2016  # jq's variables, not the shell's
 _jobs_tick_fixed() {
-  local name="$1" now="$2" copy="$3" state job
+  local name="$1" now="$2" copy="$3" state job slot
   state="$(_job_state "$name")"
   [[ "$(jq -r '.status // empty' <<<"$state")" == running ]] && return 0
   if ! job_read "$name" "$copy"; then
@@ -831,8 +919,15 @@ _jobs_tick_fixed() {
   _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
     | .error = (if .status == "idle" or .status == "ok" then null else .error end)
     | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
-  if [[ "$(jq -r '.run_by' <<<"$job")" == jobs ]] && job_due "$job" "$(_job_state "$name")" "$now"; then
+  [[ "$(jq -r '.run_by' <<<"$job")" == jobs ]] || return 0
+  state="$(_job_state "$name")"
+  if job_due "$job" "$state" "$now"; then
     _job_start "$name" "$job" "$now" jobs || true
+  elif slot="$(job_missed "$job" "$state" "$now")"; then
+    # Remembered first, so the slot is raised once even if raising fails.
+    _job_update "$name" '.missed = $s' --argjson s "$slot"
+    log "jobs: $name did not start in its window"
+    raise_outcome "$(job_outcome_command "$name")" missed "$(jq -r '.agent' <<<"$job")" jobs
   fi
 }
 

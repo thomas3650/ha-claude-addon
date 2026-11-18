@@ -79,7 +79,9 @@ carries `agent`, the name that was asked for, when it is a name the command
 accepts, and `by`: `command` for a run a command started, `jobs` for one
 the tick started (see "Fixed jobs"). A run's event is raised when the run
 has ended, not when the command arrived; a command for a run that is on
-already raises `running` at once and starts nothing.
+already raises `running` at once and starts nothing. A fixed job the tick
+starts that did not start in its window raises `missed`, with `by` `jobs`
+("Fixed jobs").
 
 ## A new conversation
 
@@ -328,7 +330,8 @@ Each job's state, which only root can read, is in
 working folder has no file for the agent, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
 `next_run` (seconds since 1970), and from the last good result `finding`
 (the verdict), `text`, `notify` and `notify_rose` (`notify` went from false
-to true). What Claude printed is kept in `/data/state/job-<name>.log`, left
+to true), and for a fixed job `missed` (the last time raised as missed).
+What Claude printed is kept in `/data/state/job-<name>.log`, left
 out of backups.
 
 ### The jobs in Home Assistant
@@ -441,6 +444,28 @@ with `last_run`, then `ok`, `failed` or `timeout`, with `finding` and `text`
 (the verdict and text of this run's result; empty when an `ok` run's result
 could not be kept) and `next_run` worked out again. The `Jobs:` line leaves
 fixed jobs out.
+
+A fixed file's `time` has a window: from the time until its limit
+(`timeout`, or `run_timeout`) and 15 minutes later. A file with `run_by`
+`jobs` is due at the first tick in its window, and only then: after the
+window the run is skipped for that day, so a pause lifted, a restart or a
+switch turned on later does not start it. The day is the time's own: a tick
+just after midnight still starts yesterday's run at 23:45 while its window
+lasts, when yesterday is one of its `days`. A run started by a command sets
+`last_run` as well; the tick runs the time when `last_run` is before it, so
+a command's run earlier that day does not stand in for it, and one after
+the time does. `next_run` of every fixed file skips a time whose window has
+passed, so it is never a time that will not start.
+
+When the window of a file with `run_by` `jobs` ends and its run did not
+start, while the job is switched on, the tick at which it ends raises
+`ha_claude_outcome` with `outcome` `missed`, `command` as for its run,
+`agent` and `by` `jobs`, once for that time; nothing is cleared. Only that
+tick raises it: as no tick is sent while "Assistent pause" is on, a window
+that ended during the pause, before the add-on started or before the switch
+went on is not reported at a later tick. A run that started and was then
+failed, by a restart for example, is not missed. A file with `run_by`
+`automation` is never missed: its automation starts it.
 
 When a run's `notify` goes from false to true, the add-on raises the event
 `ha_claude_job_notify` with `job` and `finding`, once for that run: not

@@ -66,9 +66,16 @@ teardown() {
 }
 
 # repo_job <name> [jq-update] - a file from the repo, run by the jobs, due
-# now (00:00 every day), its agent, and the placed copy.
+# now (at this quarter hour, every day: its window is open for at least its
+# limit), its agent, and the placed copy. In the last half minute of a
+# quarter it waits for the next one, so a test with a limit of a second
+# still finds the window open.
 repo_job() {
-  jq -nc --arg n "$1" '{agent: $n, run_by: "jobs", schedule: {time: "00:00"}, enabled: true}' \
+  local h m
+  (( $(date +%s) % 900 < 870 )) || sleep 31
+  read -r h m <<<"$(date '+%H %M')"
+  jq -nc --arg n "$1" --arg t "$(printf '%s:%02d' "$h" $((10#$m / 15 * 15)))" \
+    '{agent: $n, run_by: "jobs", schedule: {time: $t}, enabled: true}' \
     | jq -c "${2:-.}" > "$HC_WORKSPACE/jobs/$1.json"
   touch "$HC_WORKSPACE/.claude/agents/$1.md"
   cp "$HC_WORKSPACE/jobs/$1.json" "$HC_JOBS/$1.json"
@@ -500,4 +507,80 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   [[ "$output" == *"no chat session"* ]]
   [ "$(cat "$CALLS")" = "outcome morning ok beta-run jobs" ]
   [ ! -e "$HC_STATE/after/beta-run" ]
+}
+
+# at_time <HH:MM> - the tick's clock: date +%s gives that time today; any
+# other date call is the real one. For ticks that start nothing.
+at_time() {
+  FAKE_NOW="$(date -d "$TODAY $1:00" +%s 2>/dev/null || date -j -f '%Y-%m-%d %H:%M:%S' "$TODAY $1:00" +%s)"
+  date() { if [[ "$*" == +%s ]]; then echo "$FAKE_NOW"; else command date "$@"; fi; }
+}
+
+# window_job <name> [jq-update] - a file from the repo run by the jobs at
+# 07:00 with a limit of 600 seconds: its window ends at 07:25.
+window_job() {
+  repo_job "$1" ". + {schedule: {time: \"07:00\"}, timeout: 600} | ${2:-.}"
+}
+
+@test "the tick raises missed once when a window ends unstarted, and starts nothing" {
+  runner_setup
+  window_job alpha-run
+  at_time 07:30
+  jobs_tick
+  [ "$(cat "$CALLS")" = "outcome run missed alpha-run jobs" ]
+  [ "$(state alpha-run .missed)" = "$(command date -d "$TODAY 07:00:00" +%s 2>/dev/null || command date -j -f '%Y-%m-%d %H:%M:%S' "$TODAY 07:00:00" +%s)" ]
+  at_time 07:31
+  jobs_tick
+  [ "$(grep -c . "$CALLS")" -eq 1 ]
+  [ ! -e "$STUB/starts" ]
+  # Its next run is tomorrow's, not the time it missed.
+  (( $(state alpha-run .next_run) > FAKE_NOW ))
+}
+
+@test "missed is morning for the file morning_job names" {
+  runner_setup
+  set_options '{"morning_job": "beta-run"}'
+  window_job beta-run '. + {after: ["clear_chat"]}'
+  at_time 07:30
+  jobs_tick
+  [ "$(cat "$CALLS")" = "outcome morning missed beta-run jobs" ]
+  [ ! -e "$HC_STATE/after/beta-run" ]
+}
+
+@test "no missed when switched off, at a later first tick, or after a run a restart failed" {
+  runner_setup
+  window_job alpha-run
+  jq -c '.enabled = false' "$HC_WORKSPACE/jobs/alpha-run.json" > "$HC_JOBS/alpha-run.json"
+  at_time 07:30
+  jobs_tick
+  # Switched on later: the window has ended at an earlier tick.
+  cp "$HC_WORKSPACE/jobs/alpha-run.json" "$HC_JOBS/alpha-run.json"
+  at_time 07:45
+  jobs_tick
+  [ ! -s "$CALLS" ]
+  # A run that started at 07:00 and was failed by a restart.
+  rm -f "$HC_WORKSPACE/jobs/alpha-run.json" "$HC_JOBS/alpha-run.json"
+  window_job beta-run
+  jq -n --argjson l "$(command date -d "$TODAY 07:00:00" +%s 2>/dev/null || command date -j -f '%Y-%m-%d %H:%M:%S' "$TODAY 07:00:00" +%s)" \
+    '{status: "running", last_run: $l}' > "$HC_JOB_STATE/beta-run.json"
+  jobs_startup
+  [ "$(state beta-run .status)" = failed ]
+  at_time 07:30
+  jobs_tick
+  [ ! -s "$CALLS" ]
+  [ ! -e "$STUB/starts" ]
+}
+
+@test "a repo file off the quarter hour or with every_hours is invalid at the tick and not started" {
+  runner_setup
+  repo_job alpha-run '.schedule = {time: "23:50"}'
+  repo_job beta-run '.schedule = {every_hours: 4}'
+  jobs_tick
+  wait_runs
+  [ "$(state alpha-run .status)" = invalid ]
+  [ "$(state alpha-run .error)" = schedule ]
+  [ "$(state beta-run .status)" = invalid ]
+  [ "$(state beta-run .error)" = schedule ]
+  [ ! -e "$STUB/starts" ]
+  [ ! -s "$CALLS" ]
 }
