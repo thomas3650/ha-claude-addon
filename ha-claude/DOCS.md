@@ -144,7 +144,12 @@ On the command `morning` the add-on runs Claude Code once, without a
 terminal, as the agent `morning-briefing` from the working folder, with the
 turn limit and the time limit from the options and with automatic memory off.
 The run is told today's date and the path of today's handover file,
-`/data/handover/YYYY-MM-DD.md`, and is expected to write that file.
+`/data/handover/YYYY-MM-DD.md`, and is expected to write that file. When
+jobs have a result file, the prompt also has one line naming them,
+`Jobs: <name>, <name> (old), ...`, where `(old)` marks a result from before
+the job's last run, or of a job that is off. Only the names go into the
+prompt, nothing of the files' content; the agent reads the results in
+`/data/results/jobs/` itself.
 
 A run without a terminal cannot ask for permission: a tool that the working
 folder's settings do not allow is refused. Give the agent a tool list that
