@@ -78,6 +78,11 @@ docker exec "$name" pgrep -u claude tmux >/dev/null || fail "tmux is not running
 # The Claude user cannot write the workspace or read the state folder.
 docker exec "$name" runuser -u claude -- touch /data/workspace/assistant/x 2>/dev/null && fail "workspace is writable by claude"
 docker exec "$name" runuser -u claude -- ls /data/state >/dev/null 2>&1 && fail "state is readable by claude"
+
+# The jobs server answers the Claude user with the image's Node.
+init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'
+answer="$(docker exec -i -u claude "$name" /usr/local/bin/ha-claude-jobs-mcp <<<"$init")" || fail "the jobs server did not run"
+grep -q '"protocolVersion":"2025-06-18"' <<<"$answer" || fail "the jobs server did not answer initialize: $answer"
 docker exec "$name" runuser -u claude -- touch /data/handover/ok || fail "handover is not writable by claude"
 docker exec "$name" runuser -u claude -- touch /data/results/ok || fail "results is not writable by claude"
 

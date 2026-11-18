@@ -24,8 +24,17 @@ jobs:
       - name: Install the schema validator
         run: python3 -m pip install --break-system-packages jsonschema==4.26.0
 
+      # Node, as the image has it, for the jobs server and its tests.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      # Every command is bash but the jobs server, which is Node.
       - name: Lint
-        run: shellcheck -x -s bash ha-claude/rootfs/usr/local/lib/ha-claude/*.sh ha-claude/rootfs/usr/local/bin/* tests/container.sh
+        run: |
+          shellcheck -x -s bash ha-claude/rootfs/usr/local/lib/ha-claude/*.sh tests/container.sh \
+            $(ls ha-claude/rootfs/usr/local/bin/* | grep -v '/ha-claude-jobs-mcp$')
+          node --check ha-claude/rootfs/usr/local/bin/ha-claude-jobs-mcp
 
       - name: Unit tests
         run: bats tests/

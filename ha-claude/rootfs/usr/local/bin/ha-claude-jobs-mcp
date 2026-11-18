@@ -1,0 +1,461 @@
+#!/usr/bin/env node
+// ha-claude-jobs-mcp - the chat's jobs as tools: an MCP server over standard
+// input and output (JSON-RPC 2.0, one message per line), with three tools:
+//
+//   job_list     every job file in the jobs folder, briefly
+//   job_set      checks a job and writes its file whole, in one step
+//   job_run_now  asks the add-on to start a chat's job now
+//
+// Only the chat's Claude Code starts it, from the working folder, as the
+// Claude user; it writes in the jobs folder as the chat's Write did. It uses
+// Node's own modules only. It never reads the job state (root's), never
+// deletes a file, and refuses every call when HA_CLAUDE_UNATTENDED or
+// HA_CLAUDE_JOB is set: an unattended run gets none of these tools.
+//
+// A refusal is one line, "<word>: <field>", never the file. The check of a
+// job is the add-on's own, ha-claude-job-check.
+//
+// HC_DATA, HC_JOBS, HC_WORKSPACE, HC_RESULTS, HC_JOB_CHECK and HC_LIB are
+// for the tests, which run it from the source tree.
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const DATA = process.env.HC_DATA || '/data';
+const JOBS = process.env.HC_JOBS || path.join(DATA, 'jobs');
+const WORKSPACE = process.env.HC_WORKSPACE || path.join(DATA, 'workspace/assistant');
+const RESULTS = process.env.HC_RESULTS || path.join(DATA, 'results');
+const CHECK = process.env.HC_JOB_CHECK || path.join(__dirname, 'ha-claude-job-check');
+
+const NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const DAY_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const WORD_RE = /^[a-z_]{1,20}$/;
+// As jobs.sh: HC_JOB_BYTES and HC_JOBS_MAX.
+const JOB_BYTES = 16384;
+const JOBS_MAX = 10;
+// The fields of a file from the repo that the chat may change (fixed.sh).
+const REPO_MINE = ['schedule', 'enabled', 'task'];
+const LOCK_WAIT_MS = 10000;
+const LOCK_STALE_MS = 60000;
+const LINE_MAX = 1024 * 1024;
+
+const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+
+// The field a word of the check is about.
+const CHECK_FIELD = {
+  shape: 'job', name: 'name', type: 'agent', task: 'task', schedule: 'schedule',
+  end: 'end', limit: 'enabled', agent: 'agent', differs: 'job',
+};
+
+class Refusal extends Error {
+  constructor(word, field) {
+    super(`${word}: ${field}`);
+  }
+}
+const refuse = (word, field) => { throw new Refusal(word, field); };
+
+function today() {
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function lstat(file) {
+  try { return fs.lstatSync(file); } catch { return null; }
+}
+
+// A plain file, not a link.
+function plain(file) {
+  const st = lstat(file);
+  return st !== null && st.isFile();
+}
+
+// The text of a plain file of at most JOB_BYTES, or null. Opened without
+// following a link and without waiting on a pipe, and checked again once
+// open, as the Claude user can swap a file at any moment.
+function readSmall(file) {
+  if (!plain(file)) return null;
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch { return null; }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > JOB_BYTES) return null;
+    const buf = Buffer.alloc(JOB_BYTES + 1);
+    let len = 0;
+    for (;;) {
+      const n = fs.readSync(fd, buf, len, buf.length - len, null);
+      if (n === 0) break;
+      len += n;
+      if (len > JOB_BYTES) return null;
+    }
+    return buf.subarray(0, len).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readJob(file) {
+  const text = readSmall(file);
+  if (text === null) return null;
+  try {
+    const v = JSON.parse(text);
+    return isObject(v) ? v : null;
+  } catch { return null; }
+}
+
+// From the repo: the working folder has a plain file of that name (fixed.sh,
+// fixed_is, which also wants the agent; the check holds that).
+function fromRepo(name) {
+  return plain(path.join(WORKSPACE, 'jobs', `${name}.json`));
+}
+
+// The job files' names, in order: <name>.json, a job name, a plain file.
+// ended/ and .requests/ are folders, and so never one.
+function jobNames() {
+  let entries;
+  try { entries = fs.readdirSync(JOBS); } catch { return []; }
+  return entries
+    .filter((e) => e.endsWith('.json'))
+    .map((e) => e.slice(0, -5))
+    .filter((n) => NAME_RE.test(n) && plain(path.join(JOBS, `${n}.json`)))
+    .sort();
+}
+
+// The other enabled chat jobs: not this name, not a file from the repo.
+function othersEnabled(name) {
+  let n = 0;
+  for (const other of jobNames()) {
+    if (other === name || fromRepo(other)) continue;
+    const job = readJob(path.join(JOBS, `${other}.json`));
+    if (job !== null && job.enabled === true) n += 1;
+  }
+  return n;
+}
+
+// Canonical JSON, keys sorted, to compare two values.
+function canon(v) {
+  if (Array.isArray(v)) return `[${v.map(canon).join(',')}]`;
+  if (isObject(v)) {
+    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
+// The add-on's check, on exactly the bytes that are written.
+function check(buf, origin, name, since, others) {
+  const r = spawnSync(CHECK, ['--origin', origin, '--since', since, '--others', String(others), '--name', name], {
+    input: buf,
+    env: { ...process.env, HC_DATA: DATA, HC_JOBS: JOBS, HC_WORKSPACE: WORKSPACE, HC_RESULTS: RESULTS },
+    timeout: 20000,
+    maxBuffer: 1024 * 1024,
+    encoding: 'utf8',
+  });
+  if (r.status === 0) return;
+  const word = (r.stdout || '').trim();
+  if (r.status === 1 && WORD_RE.test(word)) refuse(word, CHECK_FIELD[word] || 'job');
+  refuse('check', 'job');
+}
+
+function noOtherKeys(args, keys) {
+  if (!isObject(args)) refuse('shape', 'arguments');
+  for (const k of Object.keys(args)) if (!keys.includes(k)) refuse('shape', 'arguments');
+}
+
+function wantName(args) {
+  if (typeof args.name !== 'string' || !NAME_RE.test(args.name)) refuse('name', 'name');
+  return args.name;
+}
+
+function lock() {
+  const dir = path.join(JOBS, '.lock');
+  const until = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      fs.mkdirSync(dir, 0o700);
+      return dir;
+    } catch (e) {
+      if (e.code !== 'EEXIST') refuse('folder', 'jobs');
+    }
+    // A lock left by a server that died is taken over once it is old; it is
+    // a folder, never a file.
+    const st = lstat(dir);
+    if (st !== null && st.isDirectory() && Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+      try { fs.rmdirSync(dir); } catch { /* another took it */ }
+      continue;
+    }
+    if (Date.now() > until) refuse('busy', 'name');
+    sleep(100);
+  }
+}
+
+function unlock(dir) {
+  try { fs.rmdirSync(dir); } catch { /* gone already */ }
+}
+
+// Writes buf to <name>.json.new and moves it over <name>.json, in one step.
+function writeJob(name, buf) {
+  const file = path.join(JOBS, `${name}.json`);
+  const tmp = `${file}.new`;
+  let fd;
+  try {
+    fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o600);
+  } catch { refuse('write', 'name'); }
+  try {
+    let off = 0;
+    while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
+    fs.fsyncSync(fd);
+  } catch {
+    refuse('write', 'name');
+  } finally {
+    fs.closeSync(fd);
+  }
+  try { fs.renameSync(tmp, file); } catch { refuse('write', 'name'); }
+}
+
+function jobList(args) {
+  noOtherKeys(args === undefined ? {} : args, []);
+  const list = jobNames().map((name) => {
+    const repo = fromRepo(name);
+    const job = readJob(path.join(JOBS, `${name}.json`)) || {};
+    const entry = {
+      name,
+      from_repo: repo,
+      agent: typeof job.agent === 'string' ? job.agent : null,
+      schedule: isObject(job.schedule) ? job.schedule : null,
+      enabled: typeof job.enabled === 'boolean' ? job.enabled : null,
+      end: typeof job.end === 'string' ? job.end : null,
+    };
+    if (typeof job.description === 'string') entry.description = job.description;
+    else entry.task = typeof job.task === 'string' ? Array.from(job.task).slice(0, 200).join('') : null;
+    entry.result = repo
+      ? (typeof job.agent === 'string' && NAME_RE.test(job.agent) ? path.join(RESULTS, `${job.agent}.json`) : null)
+      : path.join(RESULTS, 'jobs', `${name}.json`);
+    return entry;
+  });
+  return JSON.stringify(list);
+}
+
+function jobSet(args) {
+  noOtherKeys(args, ['name', 'job']);
+  const name = wantName(args);
+  const job = args.job;
+  if (!isObject(job)) refuse('shape', 'job');
+  const repo = fromRepo(name);
+  const file = path.join(JOBS, `${name}.json`);
+  const buf = Buffer.from(JSON.stringify(job), 'utf8');
+
+  if (repo) {
+    check(buf, 'repo', name, today(), 0);
+    if (job.run_by !== 'jobs') refuse('run_by', 'run_by');
+    const placed = readJob(file);
+    if (placed === null) refuse('missing', 'name');
+    if (placed.run_by !== 'jobs') refuse('run_by', 'run_by');
+    const keys = new Set([...Object.keys(placed), ...Object.keys(job)]);
+    for (const k of [...keys].sort()) {
+      if (REPO_MINE.includes(k)) continue;
+      if (!(k in job) || !(k in placed) || canon(job[k]) !== canon(placed[k])) refuse('differs', k);
+    }
+  } else {
+    // created: today for a new job, the file's own for one that is there.
+    let want = today();
+    const st = lstat(file);
+    if (st !== null) {
+      if (!st.isFile()) refuse('unreadable', 'name');
+      const existing = readJob(file);
+      if (existing !== null && typeof existing.created === 'string') want = existing.created;
+    }
+    if (typeof job.created !== 'string' || !DAY_RE.test(job.created)) refuse('shape', 'created');
+    if (job.created !== want) refuse('created', 'created');
+    check(buf, 'chat', name, job.created, othersEnabled(name));
+  }
+
+  // Counted again under the lock, so two calls at once do not both pass the
+  // limit. The add-on's tick stays the authority.
+  const held = lock();
+  try {
+    if (!repo && job.enabled === true && othersEnabled(name) >= JOBS_MAX) refuse('limit', 'enabled');
+    writeJob(name, buf);
+  } finally {
+    unlock(held);
+  }
+  return `written: ${name}`;
+}
+
+function jobRunNow(args) {
+  noOtherKeys(args, ['name']);
+  const name = wantName(args);
+  if (fromRepo(name)) refuse('repo', 'name');
+  const file = path.join(JOBS, `${name}.json`);
+  const text = readSmall(file);
+  if (text === null) refuse('missing', 'name');
+  let job;
+  try { job = JSON.parse(text); } catch { refuse('shape', 'job'); }
+  if (!isObject(job)) refuse('shape', 'job');
+  if (typeof job.created !== 'string' || !DAY_RE.test(job.created)) refuse('shape', 'created');
+  check(Buffer.from(text, 'utf8'), 'chat', name, job.created, othersEnabled(name));
+
+  const dir = path.join(JOBS, '.requests');
+  let st = lstat(dir);
+  if (st === null) {
+    try { fs.mkdirSync(dir, 0o700); } catch { /* made meanwhile */ }
+    st = lstat(dir);
+  }
+  if (st === null || !st.isDirectory()) refuse('requests', 'name');
+  try {
+    fs.closeSync(fs.openSync(path.join(dir, name),
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o600));
+  } catch { refuse('requests', 'name'); }
+  return `requested: ${name}`;
+}
+
+const NAME_SCHEMA = { type: 'string', pattern: NAME_RE.source };
+const TOOLS = [
+  {
+    name: 'job_list',
+    description: 'Lists every job file: its name, whether it is from the repo, agent, schedule, enabled, end, '
+      + 'its description or the first 200 characters of its task, and where its result file is.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run: jobList,
+  },
+  {
+    name: 'job_set',
+    description: 'Checks a job and writes its file whole, /data/jobs/<name>.json. The job is the whole file as a '
+      + 'JSON object, in the format of /usr/share/ha-claude/schemas/job-chat.schema.json, or for a file from the '
+      + 'repo job-repo.schema.json, where only schedule, enabled and task may change. A new job has created today; '
+      + 'a job that is there keeps its created. A refusal is one line, "<word>: <field>".',
+    inputSchema: {
+      type: 'object',
+      properties: { name: NAME_SCHEMA, job: { type: 'object' } },
+      required: ['name', 'job'],
+      additionalProperties: false,
+    },
+    run: jobSet,
+  },
+  {
+    name: 'job_run_now',
+    description: "Asks the add-on to start a chat's job now (not a file from the repo). The add-on starts it as "
+      + 'the tick would, or drops the request and logs why.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: NAME_SCHEMA },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    run: jobRunNow,
+  },
+];
+
+function callTool(params) {
+  for (const v of ['HA_CLAUDE_UNATTENDED', 'HA_CLAUDE_JOB']) {
+    if (v in process.env) return { content: [{ type: 'text', text: `unattended: ${v}` }], isError: true };
+  }
+  const tool = TOOLS.find((t) => t.name === params.name);
+  try {
+    return { content: [{ type: 'text', text: tool.run(params.arguments) }] };
+  } catch (e) {
+    if (e instanceof Refusal) return { content: [{ type: 'text', text: e.message }], isError: true };
+    return { content: [{ type: 'text', text: 'error: job' }], isError: true };
+  }
+}
+
+class RpcError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function handle(method, params) {
+  switch (method) {
+    case 'initialize': {
+      const asked = isObject(params) ? params.protocolVersion : undefined;
+      return {
+        protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0],
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'jobs', version: '1.0.0' },
+      };
+    }
+    case 'ping':
+      return {};
+    case 'tools/list':
+      return { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
+    case 'tools/call':
+      if (!isObject(params) || typeof params.name !== 'string' || !TOOLS.some((t) => t.name === params.name)) {
+        throw new RpcError(-32602, 'unknown tool');
+      }
+      return callTool(params);
+    default:
+      throw new RpcError(-32601, 'method not found');
+  }
+}
+
+function send(msg) {
+  process.stdout.write(`${JSON.stringify(msg)}\n`);
+}
+
+function answerError(id, code, message) {
+  send({ jsonrpc: '2.0', id, error: { code, message } });
+}
+
+function line(text) {
+  if (text.trim() === '') return;
+  let msg;
+  try { msg = JSON.parse(text); } catch { answerError(null, -32700, 'parse error'); return; }
+  if (!isObject(msg)) { answerError(null, -32600, 'invalid request'); return; }
+  const hasId = msg.id !== undefined;
+  if (hasId && typeof msg.id !== 'string' && typeof msg.id !== 'number') {
+    answerError(null, -32600, 'invalid request');
+    return;
+  }
+  if (msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
+    if (hasId) answerError(msg.id, -32600, 'invalid request');
+    return;
+  }
+  // A notification (notifications/initialized among them) has no answer.
+  if (!hasId) return;
+  try {
+    send({ jsonrpc: '2.0', id: msg.id, result: handle(msg.method, msg.params) });
+  } catch (e) {
+    if (e instanceof RpcError) answerError(msg.id, e.code, e.message);
+    else answerError(msg.id, -32603, 'internal error');
+  }
+}
+
+let pending = '';
+let skipping = false;
+process.stdout.on('error', () => {});
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  pending += chunk;
+  let at;
+  while ((at = pending.indexOf('\n')) !== -1) {
+    const text = pending.slice(0, at).replace(/\r$/, '');
+    pending = pending.slice(at + 1);
+    if (skipping) { skipping = false; continue; }
+    line(text);
+  }
+  // A line too long to be a message is answered once and skipped to its end.
+  if (pending.length > LINE_MAX) {
+    pending = '';
+    if (!skipping) answerError(null, -32700, 'parse error');
+    skipping = true;
+  }
+});
+process.stdin.on('end', () => {
+  if (!skipping) line(pending.replace(/\r$/, ''));
+  pending = '';
+});
