@@ -112,23 +112,38 @@ grep -q "ignoring unknown command" <<<"$(logs)" || fail "unknown command was not
 grep -q "outcome: ping=ok" <<<"$(logs)" || fail "ping was not handled"
 docker inspect -f '{{.State.Running}}' "$name" | grep -q true || fail "the add-on stopped"
 
-# The morning command: with the agent in place and nobody logged in, the run
-# fails or is stopped, the outcome is reported, the chat session is started
-# again, and what the run printed is out of the Claude user's reach.
-docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude/agents && touch /data/workspace/assistant/.claude/agents/morning-briefing.md && echo "{\"morning_timeout\":20}" > /data/options.json'
+# The morning command: without the option morning_job it is not
+# configured. With it naming a job file from the working folder whose after
+# step clears the chat, and nobody logged in, the run fails or is stopped,
+# the chat session is started again, the outcome is reported, and what the
+# run printed is out of the Claude user's reach.
+printf '"morning"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 20); do
+  grep -q "outcome: morning=" <<<"$(logs)" && break
+  sleep 1
+done
+grep -q "outcome: morning=not_configured" <<<"$(logs)" || fail "morning without morning_job was not not_configured"
+docker exec "$name" bash -c 'mkdir -p /data/workspace/assistant/.claude/agents /data/workspace/assistant/jobs && touch /data/workspace/assistant/.claude/agents/night-briefing.md && echo "{\"agent\":\"night-briefing\",\"run_by\":\"automation\",\"schedule\":{\"time\":\"06:30\"},\"enabled\":true,\"timeout\":20,\"context\":[\"handover\"],\"after\":[\"clear_chat\"]}" > /data/workspace/assistant/jobs/night-briefing.json && echo "{\"morning_job\":\"night-briefing\"}" > /data/options.json'
+syncs_before="$(logs | grep -c 'outcome: sync=' || true)"
+printf '"sync"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
+for _ in $(seq 1 30); do
+  [[ "$(logs | grep -c 'outcome: sync=')" -gt "$syncs_before" ]] && break
+  sleep 1
+done
+docker exec "$name" test -f /data/jobs/night-briefing.json || fail "the job file was not placed"
 docker exec "$name" runuser -u claude -- sh -c 'mkdir -p /data/handover/sub/.claude && touch /data/handover/CLAUDE.md /data/handover/sub/.claude/x'
 starts_before="$(logs | grep -c 'chat: starting a new session')"
 printf '"morning"\n' | timeout -s KILL 5 docker attach --sig-proxy=false "$name" >/dev/null 2>&1 || true
 for _ in $(seq 1 90); do
-  grep -q "outcome: morning=" <<<"$(logs)" && break
+  grep -q -E "outcome: morning=(failed|timeout)" <<<"$(logs)" && break
   sleep 1
 done
 grep -q -E "outcome: morning=(failed|timeout)" <<<"$(logs)" || fail "the morning command did not report failed or timeout"
-docker exec "$name" test -f /data/state/morning.log || fail "the morning run's output was not kept"
+docker exec "$name" test -f /data/state/job-night-briefing.log || fail "the morning run's output was not kept"
 docker exec "$name" test ! -e /data/handover/CLAUDE.md || fail "a file that reads as instructions survived in the handover folder"
 docker exec "$name" test ! -e /data/handover/sub/.claude || fail "a settings folder survived in the handover folder"
 docker exec "$name" test -d /data/handover/sub || fail "the clean-up removed more than it should"
-docker exec "$name" runuser -u claude -- cat /data/state/morning.log >/dev/null 2>&1 && fail "the Claude user can read the morning run's output"
+docker exec "$name" runuser -u claude -- cat /data/state/job-night-briefing.log >/dev/null 2>&1 && fail "the Claude user can read the morning run's output"
 [[ "$(logs | grep -c 'chat: starting a new session')" -gt "$starts_before" ]] || fail "no new chat session after the morning command"
 for _ in $(seq 1 10); do
   docker exec "$name" pgrep -u claude tmux >/dev/null && break

@@ -10,11 +10,11 @@
 
 # True when the name is one the run command may start: a short name of
 # lowercase letters, digits and hyphens, so it cannot leave the agents
-# folder, and not one of the two agents the add-on starts itself. The chat's
-# agent run without a terminal would have the chat's tools with nobody there.
+# folder, and not the chat's agent, which run without a terminal would have
+# the chat's tools with nobody there.
 run_name_ok() {
   [[ "$1" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || return 1
-  [[ "$1" != chat && "$1" != "$HC_MORNING_AGENT" ]]
+  [[ "$1" != chat ]]
 }
 
 run_configured() {
@@ -23,12 +23,15 @@ run_configured() {
 }
 
 # run_agent <variable> <agent> - runs the agent and stores the outcome in
-# the named variable as one word: ok, failed, timeout or not_configured. The
-# outcome is not printed, for the reason run_morning gives, and the run's
-# output goes to a file only root can read.
+# the named variable as one word: ok, failed, timeout or not_configured. It
+# is the run command's for an agent that has no job file; a file from the
+# repo runs in the job runner (jobs.sh). The outcome is not printed: a
+# caller that captured it would hold back a stop signal until the run had
+# ended. The run's output can hold what the agent read, so it goes to a file
+# only root can read, not to the log.
 run_agent() {
   local _ra_agent="${2:-}" _ra_today _ra_limit _ra_turns _ra_log _ra_rc=0 _ra_started=$SECONDS
-  local _ra_marker="$HC_STATE/run.started" _ra_job=()
+  local _ra_marker="$HC_STATE/run-${2:-}.started" _ra_job=()
   if ! run_configured "$_ra_agent"; then
     printf -v "$1" '%s' not_configured
     return 0

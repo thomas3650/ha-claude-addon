@@ -48,15 +48,15 @@ EOT
   [ ! -e "$STUB/argv" ]
 }
 
-@test "a name that is not a plain agent name, or is one of the add-on's own two, runs nothing" {
+@test "a name that is not a plain agent name, or is the chat's, runs nothing" {
   load_lib options env morning result run
   stub_claude write
-  touch "$HC_WORKSPACE/.claude/agents/chat.md" "$HC_WORKSPACE/.claude/agents/morning-briefing.md" \
+  touch "$HC_WORKSPACE/.claude/agents/chat.md" \
         "$HC_WORKSPACE/.claude/agents/Abc.md" "$HC_WORKSPACE/.claude/agents/a.b.md" \
         "$HC_WORKSPACE/.claude/x.md" "$HC_WORKSPACE/.claude/agents/a b.md"
   long="$(printf 'a%.0s' {1..33})"
   touch "$HC_WORKSPACE/.claude/agents/$long.md"
-  for name in chat morning-briefing ../x a.b Abc "" "a b" "$long" -x 1a; do
+  for name in chat ../x a.b Abc "" "a b" "$long" -x 1a; do
     got=""
     run_agent got "$name"
     [ "$got" = "not_configured" ]

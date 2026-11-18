@@ -1,0 +1,1 @@
+{"agent":"night-briefing","schedule":{"time":"06:30"},"enabled":true,"timeout":900,"max_turns":40,"context":["handover","jobs"],"after":["clear_chat"],"run_by":"jobs"}

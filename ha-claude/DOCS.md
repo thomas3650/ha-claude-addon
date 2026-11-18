@@ -37,14 +37,14 @@ Remote Control needs a claude.ai subscription login. API keys are not supported.
 | `assistant_env` | Values handed to Claude Code as environment variables, one `NAME=value` per entry. Names must start with `ASSISTANT_`; any other entry is refused. Claude can read them, so nothing secret goes here. Use them for addresses that `.mcp.json` refers to as `${ASSISTANT_...}`. Read when the add-on starts. |
 | `extra_mcp` | More MCP servers for Claude, one `name=upstream` per entry, for example `tools=http://my-mcp:8000/path`. A name is lowercase letters, digits and `-`; an upstream is `http` or `https` with no query string, and its path is sent as it is (an upstream without a path receives `/mcp/<name>`). The upstream's own secret path, if it has one, is its credential and stays in this option; the add-on keeps the upstream's address out of its log. Read when the add-on starts. See "Home Assistant for Claude". |
 | `extra_mcp_auth` | Optional. A token for an `extra_mcp` server, one `name=token` per entry, where the name is that server's name in `extra_mcp`. The listener sends it to that server as `Authorization: Bearer <token>`; Claude never sees it. A token may hold letters, digits and `. _ ~ + / = -`, at most 2048 of them. Give a token only to an `https` server: over `http` it travels unencrypted, and the log says so. Read when the add-on starts. |
-| `morning_timeout` | The longest a morning run may take, in seconds. |
-| `morning_max_turns` | The most steps Claude may take in a morning run |
-| `run_timeout` | The longest a run started with the `run` command may take, in seconds |
-| `run_max_turns` | The most steps Claude may take in such a run |
-| `jobs_parallel` | The most jobs that run at once, 1 to 10; 3 by default. See "Jobs" |
+| `morning_job` | Optional, no default. The name of the job file from the working folder that the `morning` command runs. See "The morning run" |
+| `morning_timeout`, `morning_max_turns` | No longer used: the morning run's limits are its job file's. Kept so that a saved setting stays valid |
+| `run_timeout` | The longest a run of an agent with no job file, started with the `run` command, may take, in seconds; also the limit of a job file from the working folder that sets no `timeout` |
+| `run_max_turns` | The most steps Claude may take in such a run; also the limit of a job file from the working folder that sets no `max_turns` |
+| `jobs_parallel` | The most runs that may be on when one of the chat's jobs starts, 1 to 10; 3 by default. A fixed job's run always starts, and counts. See "Jobs" |
 | `job_timeout` | The longest a job's run may take, in seconds; 1800 by default |
 | `job_max_turns` | The most steps Claude may take in a job's run; 60 by default |
-| `morning_chat` | On (the default): after the `morning` command the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
+| `morning_chat` | On (the default): after a run whose job file has the `after` step `clear_chat` (the morning run), the chat starts a new conversation that presents the run. Off: the chat is left alone, and Home Assistant learns how the run went from the event only |
 | `chat_resume` | Off (the default): every start of the chat is a new conversation. On: the chat continues its last conversation after a `sync`, a `restart-chat` and a start of the add-on, so it is ended by `clear-chat`, `/clear` and the morning's opening. See "Keeping the conversation", which also covers the one case where a cleared conversation can come back |
 
 The add-on comes with GitHub's SSH host keys, so a server that answers for
@@ -61,8 +61,8 @@ Send one of these with Home Assistant's add-on stdin action:
 | `sync` | Fetches the repo again and starts a new chat session. When the fetched commit and `repo_path` are those of the last sync, the working folder is left as it is and the chat is cleared instead (see "A new conversation"). With `chat_resume` on, the new session continues the conversation, and a sync with nothing new leaves the chat alone (see "Keeping the conversation") |
 | `restart-chat` | Ends the chat session and starts a new one; with `chat_resume` on, the new one continues the conversation |
 | `clear-chat` | Starts a new conversation in the running chat session (see "A new conversation") |
-| `morning` | Runs the morning briefing, then, unless `morning_chat` is off, starts a new conversation that presents the summary. See below |
-| `run <agent>` | Runs the agent of that name from the working folder once, without a terminal. The chat session is left alone. See "Running an agent" |
+| `morning` | Starts the run of the job file `morning_job` names, in the job runner, and returns at once. See "The morning run" |
+| `run <name>` | For a job file from the working folder ("Fixed jobs"): starts its run in the job runner and returns at once. For any other agent: runs it once, without a terminal, and waits. The chat session is left alone. See "Running an agent" |
 | `report`, or `report YYYY-MM` | Runs the working folder's `.claude/report` and writes what it prints to the add-on's log. See below |
 | `memory` | Writes the chat's memory to the add-on's log. See "The memory" |
 | `jobs tick` | Checks the job files and starts the jobs that are due, in the background, and returns at once. Raises no event. See "Jobs" |
@@ -74,8 +74,14 @@ that had to restart instead is `ok`, and the log says so. For `sync` it is `ok` 
 working folder was renewed or no repo is configured, `kept` when the
 working folder could not be renewed and the previous one stays in use, and
 `failed` when no chat session could be started. After `kept`, the add-on's log and `ha-claude-status` say
-why. For `report`, see below. For `run` the event also carries `agent`,
-the name that was asked for, when it is a name the command accepts.
+why. For `report`, see below. For `run` and `morning` the event also
+carries `agent`, the name that was asked for, when it is a name the command
+accepts, and `by`: `command` for a run a command started, `jobs` for one
+the tick started (see "Fixed jobs"). A run's event is raised when the run
+has ended, not when the command arrived; a command for a run that is on
+already raises `running` at once and starts nothing. A fixed job the tick
+starts that did not start in its window raises `missed`, with `by` `jobs`
+("Fixed jobs").
 
 ## A new conversation
 
@@ -112,9 +118,10 @@ continue the last conversation in the working folder instead
 and only these end it:
 
 - `clear-chat`, and `/clear` typed in the chat;
-- the `morning` command, when `morning_chat` is on: its opening belongs to
-  a new conversation, and a start with an opening never continues one;
-- a `clear-chat` or a `morning` whose clear has to be a restart (see "A new
+- the end of a run whose job file clears the chat (the morning run), when
+  `morning_chat` is on: its opening belongs to a new conversation, and a
+  start with an opening never continues one;
+- a `clear-chat` or such a run whose clear has to be a restart (see "A new
   conversation"): the restart is a new conversation too.
 
 Claude Code saves a conversation only once it has a message. After a clear
@@ -140,72 +147,66 @@ to continue again.
 
 ## The morning run
 
-On the command `morning` the add-on runs Claude Code once, without a
-terminal, as the agent `morning-briefing` from the working folder, with the
-turn limit and the time limit from the options and with automatic memory off.
-The run is told today's date and the path of today's handover file,
-`/data/handover/YYYY-MM-DD.md`, and is expected to write that file. When
-jobs have a result file, the prompt also has one line naming them,
-`Jobs: <name>, <name> (old), ...`, where `(old)` marks a result from before
-the job's last run, or of a job that is off. Only the names go into the
-prompt, nothing of the files' content; the agent reads the results in
-`/data/results/jobs/` itself.
+The command `morning` is the command `run` of the job file the option
+`morning_job` names ("Fixed jobs"): it starts that run now in the job
+runner and returns at once, and the outcome event is raised as `command`
+`morning`, with `agent` and `by`. A run of that file that the tick starts
+is raised as `morning` too. The add-on names no job itself: without the
+option, or when it names no job file from the working folder, `morning`
+raises `not_configured` and does nothing else.
 
-A run without a terminal cannot ask for permission: a tool that the working
-folder's settings do not allow is refused. Give the agent a tool list that
-holds only allowed tools.
+A morning briefing, for example, is such a file with the `context` lines
+`handover` and `jobs` and the `after` step `clear_chat`. With `handover`
+the first message names today's handover file, `/data/handover/YYYY-MM-DD.md`,
+and the run is `ok` only when it has also written that file since it
+started. With `jobs` it has one line naming the chat's jobs that have a
+result file, `Jobs: <name>, <name> (old), ...`, where `(old)` marks a
+result from before the job's last run, or of a job that is off. Only the
+names go into that line, nothing of the files' content; the agent reads the
+results in `/data/results/jobs/` itself.
 
-When the run has ended, the add-on starts a new conversation (see "A new
-conversation"). It opens by presenting the day's summary, or by saying that
-the run did not finish. With the option `morning_chat` off, the chat is
-left alone: the conversation in it goes on, and nothing is sent to it. The
-outcome is raised either way, and is one of:
-
-| Outcome | Meaning |
-|---|---|
-| `ok` | The run ended without an error and wrote today's handover file |
-| `failed` | The run ended with an error, or today's handover file was not written. A run that Claude Code ends with an error is `failed` also when the file was written |
-| `timeout` | The run took longer than `morning_timeout` and was stopped |
-| `not_configured` | The working folder has no agent `morning-briefing`; nothing was run and the chat session was left alone |
-
-While a run is in progress the add-on handles no other command; a command
-sent in that time is handled when the run has ended. An automation that
-waits for the event needs a timeout longer than `morning_timeout` plus a
-minute. Nothing is retried.
-
-The add-on's log shows that a run started, how it ended and how long it
-took. What Claude printed is kept in `/data/state/morning.log`, because it
-can hold what Claude read: only root can read it, which means from the host
-and not from the panel, and it is left out of backups. The run keeps no
-transcript.
+With `clear_chat`, when the run has ended, the add-on starts a new
+conversation (see "A new conversation"). It opens by presenting the day's
+summary, or by saying that the run did not finish. The runner does not do
+this itself: it leaves a request, which only root can read, in
+`/data/state/after/`, and the command loop carries it out within five
+seconds, and then raises the outcome, so the phone hears of the run after
+the briefing is in the chat. The command loop is busy while a command
+runs, so a `sync` or another long command delays the chat's clearing and
+the outcome until the loop is free; the run's result is raised when the
+run ends, whatever the loop is doing. A request a restart left is carried
+out at the next start. With the option `morning_chat` off, the chat is left alone: the
+conversation in it goes on, and nothing is sent to it. The outcome is raised
+either way.
 
 ## Running an agent
 
-On the command `run <agent>` the add-on runs Claude Code once, without a
-terminal, as the agent of that name from the working folder
-(`.claude/agents/<agent>.md`), the way it runs the morning briefing: with
-automatic memory off, with no transcript kept, and with the time limit
-`run_timeout` and the turn limit `run_max_turns`. The chat session is not
-ended or restarted.
+On the command `run <name>`, when the working folder has a job file of that
+name ("Fixed jobs"), the add-on starts that run in the job runner, as the
+tick does, and returns at once; the outcome is raised when the run has
+ended. It runs whatever the file's `enabled` says, but not when the placed
+file is not valid: then the outcome is `failed` at once. When that run is
+on already, the outcome is `running` at once and nothing starts.
+
+For any other agent the add-on runs Claude Code once, without a terminal,
+as the agent of that name from the working folder
+(`.claude/agents/<agent>.md`): with automatic memory off, with no
+transcript kept, and with the time limit `run_timeout` and the turn limit
+`run_max_turns`. The chat session is not ended or restarted. While such a
+run is in progress the add-on handles no other command.
 
 A name is a lowercase letter followed by at most 31 lowercase letters,
-digits or `-`. The two agents the add-on starts itself, `chat` and
-`morning-briefing`, are refused: the chat's agent has the tools of a session
-somebody is watching.
+digits or `-`. The chat's own agent, `chat`, is refused: it has the tools of
+a session somebody is watching.
 
 The run is told today's date and the path of its result file, and nothing
-else. Its environment holds `HA_CLAUDE_UNATTENDED` with the agent's name, as
-the morning run's does, so a hook in the working folder can tell a run
-nobody is watching from the chat session. The chat session never has that
-variable.
+else. Its environment holds `HA_CLAUDE_UNATTENDED` with the agent's name,
+as every run without a terminal does, so a hook in the working folder can
+tell a run nobody is watching from the chat session. The chat session never
+has that variable.
 
-For a fixed agent ("Fixed jobs") whose working folder's `.claude/policy.json`
-has `jobs.fixed_log` true, the environment also holds `HA_CLAUDE_JOB` with
-the agent's name, for `run` and the morning run alike. Without the flag, or
-when the policy is missing or unreadable, it is not set.
-
-As in a morning run, nothing can be asked: a tool that the working folder's
-settings do not allow is refused.
+Nothing can be asked: a tool that the working folder's settings do not
+allow is refused. Give the agent a tool list that holds only allowed tools.
 
 | Outcome | Meaning |
 |---|---|
@@ -214,31 +215,31 @@ settings do not allow is refused.
 | `timeout` | The run took longer than `run_timeout` and was stopped |
 | `not_configured` | The name is not one the command accepts, or the working folder has no such agent; nothing was run |
 
-While a run is in progress the add-on handles no other command. What Claude
-printed is kept in `/data/state/run-<agent>.log`, which only root can read
-and which is left out of backups.
+What Claude printed is kept in `/data/state/run-<agent>.log`, which only
+root can read and which is left out of backups.
 
 ## The result file
 
 An agent that runs without a terminal may leave a short result for Home
-Assistant in `/data/results/<agent>.json`: one JSON object with exactly
-three fields.
+Assistant in `/data/results/<agent>.json`: one JSON object, the same form
+for every run, `/usr/share/ha-claude/schemas/result.schema.json`.
 
 | Field | Holds | Limit |
 |---|---|---|
-| `count` | A whole number | 0 to 9999 |
 | `verdict` | One line of text | 120 characters |
 | `text` | Text; line feeds are kept | 4000 characters |
+| `count` | Optional. A whole number | 0 to 9999 |
+| `notify` | Optional. `true` or `false`; counted only for a chat's job with a `notify` condition | |
 
 Before a run the add-on removes the agent's result file, so the agent
 writes a new one. After the run the add-on checks the file: not older than the start of the
-run, at most 32 KiB, one JSON value with these three fields and no others,
-of these types and within these limits, the count written as a plain whole
-number. Control characters are removed. The add-on's own process never opens
+run, at most 32 KiB, one JSON value with `verdict` and `text`, and
+`count` and `notify` only besides, of these types and within these limits,
+the count written as a plain whole number. Control characters are removed. The add-on's own process never opens
 the file where it lies: the Claude user copies it, within a few seconds and
 up to the size limit, to a place only root reaches, and the copy is what is
-checked. A good result is raised as the event `ha_claude_result` with `agent`, `count`,
-`verdict`, `text` and `time`. A file that fails a check is not raised, and
+checked. A good result is raised as the event `ha_claude_result` with `agent`, `count`
+(0 when the result has none), `verdict`, `text` and `time`. A file that fails a check is not raised, and
 its content is never written to the log; the log line
 `result: <agent>: <reason>` names the check:
 
@@ -249,7 +250,7 @@ its content is never written to the log; the log line
 | `unreadable` | The copy did not finish within a few seconds |
 | `too large` | Over 32 KiB |
 | `malformed (not json)` | The file is not JSON |
-| `malformed (shape)` | Not one JSON object with exactly the three fields |
+| `malformed (shape)` | Not one JSON object with `verdict` and `text`, and no field but `count` and `notify` besides |
 | `malformed (count)` | The count is not a plain whole number from 0 to 9999 |
 | `malformed (type)` | The verdict or the text is not a string |
 | `malformed (length)` | The verdict or the text is over its limit |
@@ -263,9 +264,9 @@ trigger-based template sensor on the event; to keep the text out of Home
 Assistant's database, exclude the event type and that sensor from the
 recorder.
 
-A run started with `run` must leave a result to be `ok`. The morning run may
-leave one as `morning-briefing.json`; it is raised when the run is `ok` and
-the file is good, and the run's outcome does not depend on it.
+Every run must leave a result to be `ok`. A run of a job file from the
+working folder writes it here, under its agent's name, and it is raised;
+a chat's job writes its own (see "Jobs"), which is not raised.
 
 ## Jobs
 
@@ -278,7 +279,7 @@ starts the jobs that are due.
 
 | Field | Holds |
 |---|---|
-| `type` | `private`, `web` or `all`: the job runs as the agent `job-<type>` of the working folder |
+| `agent` | `job-private`, `job-web` or `job-all`: the agent of the working folder the job runs as |
 | `task` | The task, as text, at most 4000 characters |
 | `schedule` | `{"time": "HH:MM", "days": [...]}`, local time, `days` from `mon` to `sun` and every day when left out; or `{"every_hours": N}`, N from 4 to 24 |
 | `end` | The last day it runs, `YYYY-MM-DD`, at most 28 days after `created` |
@@ -286,8 +287,25 @@ starts the jobs that are due.
 | `notify` | Optional. The condition, in words, under which the run sets `notify` in its result, at most 500 characters |
 | `created` | The day the file was first written, `YYYY-MM-DD` |
 
-The file is one JSON object, with no field written twice; no other field
-is accepted. A tick reads at most 32 job files, the ones the add-on saw
+Every job file has one format: one JSON object, with no field written twice
+and no field the schemas do not name, so a file in the old form, with `type`
+for the agent, is `invalid` (`shape`) and must be written again. The fields,
+their types and ranges are in
+`/usr/share/ha-claude/schemas/job-fields.schema.json`; a chat's job is
+`job-chat.schema.json` (the fields above and no others) and a file from the
+working folder is `job-repo.schema.json` ("Fixed jobs"). What a schema cannot
+say (the 28 days, the 10 enabled jobs, a key written twice) is listed in the
+fields schema and checked by the add-on. Who may set which field:
+
+| Field | The chat's job | A file from the working folder |
+|---|---|---|
+| `agent` | one of the three | its own name |
+| `task`, `schedule`, `enabled` | the chat | the repo gives them; for `run_by` `jobs` the chat's are kept after the first placing |
+| `end`, `created`, `notify` | the chat | not allowed |
+| `description`, `timeout`, `max_turns`, `context`, `after`, `run_by` | not allowed | the repo alone |
+
+A file with the schema's form but a value outside its range is refused with
+the check's word below. A tick reads at most 32 job files, the ones the add-on saw
 first; the others are skipped, and the log says so. At most 10 jobs are enabled at once; an 11th is
 `invalid`, the one the add-on saw last. The add-on reads a file only
 through a copy the Claude user makes, within a few seconds and up to
@@ -299,36 +317,39 @@ to `/data/jobs/ended/`.
 
 A daily job runs once on each of its days, at the first tick after its
 time; a day the add-on was off is not made up. A job every N hours runs at
-the first tick N hours after its last run. At most `jobs_parallel` run at
-once; the others start at a later tick. A run is Claude Code once, without a
+the first tick N hours after its last run. The chat's jobs start while
+fewer than `jobs_parallel` runs are on, the runs of fixed jobs counted;
+the others start at a later tick. A run is Claude Code once, without a
 terminal, from the working folder, with automatic memory off, no transcript
 kept, the time limit `job_timeout` and the turn limit `job_max_turns`. The
-prompt comes on standard input and holds today's date, the job's name, its
-result file `/data/results/jobs/<name>.json`, the `notify` condition and the
-task. Its environment holds `HA_CLAUDE_UNATTENDED` with the agent's name and
-`HA_CLAUDE_JOB` with the job's name, for the working folder's hooks. A job
-does not touch the chat or the handover.
+first message comes on standard input, one form for every job: "Today is
+<date>. Your result file is <path>. Do your run.", for a chat's job with
+its result file `/data/results/jobs/<name>.json`, then the `notify`
+condition and the task. Its environment holds `HA_CLAUDE_UNATTENDED` with
+the agent's name and `HA_CLAUDE_JOB` with the job's name, for the working
+folder's hooks. A chat's job does not touch the chat or the handover.
 
-The result file has exactly three fields: `verdict` (one line, 120
-characters), `text` (4000 characters) and `notify` (`true` or `false`). It is
-checked as "The result file" describes, and not raised as an event. Unlike
+The result has the form "The result file" describes and is checked so, and
+not raised as an event; `notify` is false when it is left out. Unlike
 there, the last result is not removed before a run, so the agent can read
 it to compare; a result older than the run's start does not count.
 
-`sync` waits until the running jobs have ended, and none starts meanwhile,
-so no job runs under a working folder replaced halfway. When the add-on
-stops, the runs are stopped; at the next start a job that was running is
-`failed`.
+`sync` waits until the running jobs have ended, fixed ones included, and
+none starts meanwhile, so no job runs under a working folder replaced
+halfway. It waits at most the largest time limit among them plus 90
+seconds. When the add-on stops, the runs are stopped; at the next start a
+job that was running is `failed`.
 
 Each job's state, which only root can read, is in
 `/data/state/jobs/<name>.json`: `status` (`idle`, `running`, `ok`, `failed`,
 `timeout` or `invalid`), `error` (for `invalid` the check that failed:
-`shape`, `name`, `type`, `task`, `schedule`, `end`, `limit` or
-`unreadable`; for `failed`, `agent` when the working folder has no agent for
-the type, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
+`shape`, `name`, `type` (the agent is not one of the three), `task`,
+`schedule`, `end`, `limit` or `unreadable`; for `failed`, `agent` when the
+working folder has no file for the agent, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
 `next_run` (seconds since 1970), and from the last good result `finding`
 (the verdict), `text`, `notify` and `notify_rose` (`notify` went from false
-to true). What Claude printed is kept in `/data/state/job-<name>.log`, left
+to true), and for a fixed job `missed` (the last time raised as missed).
+What Claude printed is kept in `/data/state/job-<name>.log`, left
 out of backups.
 
 ### The jobs in Home Assistant
@@ -348,7 +369,7 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 
 | Entity | Shows |
 |---|---|
-| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type` (the agent without `job-`: `private`, `web` or `all`), `schedule`, `end`, `task`, `description` (the file's own text, which the view shows when the file has no `task`), `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
 | `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
 | `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
 | `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
@@ -375,38 +396,102 @@ A fixed job is a file `jobs/<name>.json` in the working folder, named after
 the agent it runs, for a run that belongs to the house and not to a chat.
 The add-on places each one in `/data/jobs/` as a job, so Home Assistant
 shows it with the same entities and switches it on and off like any job;
-`run_by` in its state says what starts it, and `type` is empty. A fixed job
+`run_by` in its state says what starts it, and `type` is empty. A file is a
+fixed job because the working folder holds it, whatever its fields. A fixed job
 is outside the limit of 10 enabled jobs and is never ended after 28 days.
-In this version Home Assistant's own automations start the fixed jobs; the
-tick starts none. The list of its tool calls is read from
+A file with `run_by` `jobs` is started by the tick when it is due, in the
+same runner as a chat's job; one with `run_by` `automation` (or none) only
+by the commands `run <name>` and `morning`, which Home Assistant's
+automations send. A due fixed run always starts: it does not wait for a
+place, and it starts also without an MQTT broker; its state is published
+when the broker is back. The list of its tool calls is read from
 `/data/results/fixed/<name>.log.jsonl` and needs the policy flag
 `jobs.fixed_log` in the working folder.
 
-The file has exactly these fields; a file with others, or with a `type` or
-an `end`, is refused:
+The file has these fields; a file with others, or with a `type`, an `end`,
+a `created` or a `notify`, is refused (`shape`). The form is
+`/usr/share/ha-claude/schemas/job-repo.schema.json`.
 
 | Field | Value |
 |---|---|
-| `agent` | the file's name, and a file `.claude/agents/<name>.md` must exist |
-| `run_by` | `automation` |
-| `schedule` | `time` as `HH:MM`, and optionally `days` (`mon` to `sun`; all days when left out) |
-| `task` | the task, at most 4000 characters |
+| `agent` | the file's name, and a file (not a link) `.claude/agents/<name>.md` must exist |
+| `schedule` | `time` as `HH:MM` on a quarter hour, and optionally `days` (`mon` to `sun`; all days when left out); no `every_hours` |
 | `enabled` | `true` or `false` |
+| `task` | optional: the task, at most 4000 characters |
+| `description` | optional: text for the view, at most 500 characters |
+| `timeout`, `max_turns` | optional: the run's limits, at most 3600 seconds and 100 turns |
+| `context` | optional: any of `handover` and `jobs` |
+| `after` | optional: `clear_chat` |
+| `run_by` | optional: `automation` or `jobs`; a file without it acts as `automation` |
 
-The add-on places the files at start and after every `sync`. A placed file
-keeps its `enabled`, which is the switch's choice; every other field comes
-from the working folder, so an edit of the file in `/data/jobs/` is
-overwritten at the next placing. A file the working folder has refused is not
+The placed file is checked against the working folder's: every field but
+`enabled` must be the same (`differs` otherwise); while the working folder's
+file has `run_by` `jobs`, only `agent`, `description`, `timeout`,
+`max_turns`, `context`, `after` and `run_by` must, as `schedule`, `enabled`
+and `task` are then the chat's. The check's words are `shape`, `agent`,
+`task`, `schedule` and `differs`.
+
+The add-on places the files at start and after every `sync`. A file that
+is missing in `/data/jobs/` is placed whole from the working folder. For a
+placed file, who owns a field depends on its `run_by`: while it is
+`automation` (or has none), every field but `enabled` comes from the working
+folder, so an edit in `/data/jobs/` is overwritten at the next placing and
+the working folder's change of schedule, task or `run_by` lands. Once it
+is `jobs`, placing brings `agent`, `description`, `timeout`, `max_turns`,
+`context`, `after` and `run_by` from the working folder and keeps the placed
+file's `schedule`, `enabled` and `task`, which are the chat's; a later change
+to the working folder's schedule then does not reach the placed file, and is
+only the default for a file that is missing. `enabled` is always the
+switch's choice. A file the working folder has refused is not
 placed. A fixed file removed from the working folder is deleted from
-`/data/jobs/` with its entities. A chat job with a fixed job's name is moved
+`/data/jobs/` with its entities; a file in its place that is not a valid
+fixed file is the chat's, and is moved to `ended/` instead. While a placed
+name's agent file is missing, its placed file keeps its `enabled`. A chat job with a fixed job's name is moved
 to `ended/` and the fixed job takes its place.
 
-`run <agent>` and the morning run of a fixed agent set that job's state: the
-status is `running` at the start, then `ok`, `failed` or `timeout`, with
-`last_run`, `finding` and `text` (the verdict and text of the run's result,
-when the run wrote one) and `next_run` worked out again. This does not change
-the outcome of the run. The morning prompt's `Jobs:` line ("The morning run")
-leaves fixed jobs out.
+A fixed run is the file's `agent`, with its `timeout` and `max_turns`, or
+`run_timeout` and `run_max_turns` when it sets none. Its first message is
+"Today is <date>. Your result file is /data/results/<agent>.json. Do your
+run.", then a line for each of its `context` lines in their order (see "The
+morning run"), then its `task` as "Extra task from the owner: <task>". Its
+environment holds `HA_CLAUDE_UNATTENDED` with the agent's name, and
+`HA_CLAUDE_JOB` with the job's name when the working folder's
+`.claude/policy.json` has `jobs.fixed_log` true. Before the run its last
+result is removed. The run is `ok` when it ended without an error and left a
+good result, and, with the `context` line `handover`, also today's handover
+file. The result is raised as `ha_claude_result` ("The result file"), and
+the outcome as `ha_claude_outcome` with `command` `morning` for the file
+`morning_job` names and `run` for any other, `outcome` (`ok`, `failed` or
+`timeout`), `agent` and `by` (`jobs` or `command`); with the `after` step
+`clear_chat`, after the chat is cleared ("The morning run").
+
+A fixed run sets that job's state: the status is `running` at the start,
+with `last_run`, then `ok`, `failed` or `timeout`, with `finding` and `text`
+(the verdict and text of this run's result; empty when an `ok` run's result
+could not be kept) and `next_run` worked out again. The `Jobs:` line leaves
+fixed jobs out.
+
+A fixed file's `time` has a window: from the time until its limit
+(`timeout`, or `run_timeout`) and 15 minutes later. A file with `run_by`
+`jobs` is due at the first tick in its window, and only then: after the
+window the run is skipped for that day, so a pause lifted, a restart or a
+switch turned on later does not start it. The day is the time's own: a tick
+just after midnight still starts yesterday's run at 23:45 while its window
+lasts, when yesterday is one of its `days`. A run started by a command sets
+`last_run` as well; the tick runs the time when `last_run` is before it, so
+a command's run earlier that day does not stand in for it, and one after
+the time does. `next_run` of every fixed file skips a time whose window has
+passed, so it is never a time that will not start.
+
+When the window of a file with `run_by` `jobs` ends and its run did not
+start, while the job is switched on, the tick at which it ends raises
+`ha_claude_outcome` with `outcome` `missed`, `command` as for its run,
+`agent` and `by` `jobs`, once for that time; nothing is cleared. Only that
+tick raises it: as no tick is sent while "Assistent pause" is on, a window
+that ended during the pause, before the add-on started or before the switch
+went on is not reported at a later tick. A run that started and was then
+failed, by a restart for example, is not missed. A file with `run_by`
+`automation` is never missed: its automation starts it.
 
 When a run's `notify` goes from false to true, the add-on raises the event
 `ha_claude_job_notify` with `job` and `finding`, once for that run: not
@@ -597,5 +682,5 @@ their date is more than 30 days ago. Files that Claude Code could read as
 instructions or settings (`CLAUDE.md`, `CLAUDE.local.md`, `.claude`,
 `.mcp.json`, in any case and at any depth) are removed from those folders
 and from the notes folder each time Claude Code is started, for the chat
-session, for a morning run or for a run started with `run`. When a session or a run starts, the log says so.
+session, for a run of a job file from the working folder or for a run started with `run`. When a session or a run starts, the log says so.
 Nothing else in those folders is touched.

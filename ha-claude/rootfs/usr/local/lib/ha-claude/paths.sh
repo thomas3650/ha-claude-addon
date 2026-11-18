@@ -15,3 +15,4 @@
 : "${HC_JOBS:=$HC_DATA/jobs}"
 : "${HC_JOB_RESULTS:=$HC_RESULTS/jobs}"
 : "${HC_JOB_STATE:=$HC_STATE/jobs}"
+: "${HC_SCHEMAS:=/usr/share/ha-claude/schemas}"

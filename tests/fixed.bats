@@ -56,7 +56,7 @@ copy_with() {
   fixed_setup
   copy_with '. + {type: "web"}'
   run fixed_check alpha-run "$COPY"; [ "$status" -eq 1 ]; [ "$output" = shape ]
-  copy_with 'del(.task)'
+  copy_with 'del(.schedule)'
   run fixed_check alpha-run "$COPY"; [ "$output" = shape ]
   copy_with '.enabled = "yes"'
   run fixed_check alpha-run "$COPY"; [ "$output" = shape ]
@@ -70,8 +70,18 @@ copy_with() {
   fixed_setup
   copy_with '.agent = "beta-run"'
   run fixed_check alpha-run "$COPY"; [ "$status" -eq 1 ]; [ "$output" = agent ]
+  copy_with '.run_by = "chat"'
+  run fixed_check alpha-run "$COPY"; [ "$status" -eq 1 ]; [ "$output" = shape ]
+  # The repo's file says automation: every field but enabled is the repo's.
   copy_with '.run_by = "jobs"'
-  run fixed_check alpha-run "$COPY"; [ "$status" -eq 1 ]; [ "$output" = run_by ]
+  run fixed_check alpha-run "$COPY"; [ "$status" -eq 1 ]; [ "$output" = differs ]
+  copy_with '.run_by = "jobs" | .task = "Other."'
+  run fixed_check alpha-run "$COPY"; [ "$status" -eq 1 ]; [ "$output" = differs ]
+  # An agent file that is a link is no agent file.
+  mv "$HC_WORKSPACE/.claude/agents/alpha-run.md" "$BATS_TEST_TMPDIR/agent.md"
+  ln -s "$BATS_TEST_TMPDIR/agent.md" "$HC_WORKSPACE/.claude/agents/alpha-run.md"
+  run fixed_check alpha-run "$HC_WORKSPACE/jobs/alpha-run.json"
+  [ "$status" -eq 1 ]; [ "$output" = agent ]
   rm "$HC_WORKSPACE/.claude/agents/alpha-run.md"
   run fixed_check alpha-run "$HC_WORKSPACE/jobs/alpha-run.json"
   [ "$status" -eq 1 ]; [ "$output" = agent ]
@@ -137,10 +147,10 @@ copy_with() {
 
 @test "fixed_place moves a chat file under a fixed name to ended/ and says so" {
   fixed_setup
-  jq -n '{type: "web", task: "Find a kettle.", schedule: {every_hours: 4}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' \
+  jq -n '{agent: "job-web", task: "Find a kettle.", schedule: {every_hours: 4}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' \
     > "$HC_JOBS/alpha-run.json"
   fixed_place
-  [ "$(jq -r .type "$HC_JOBS/ended/alpha-run.json")" = web ]
+  [ "$(jq -r .agent "$HC_JOBS/ended/alpha-run.json")" = job-web ]
   [ "$(jq -cS . "$HC_JOBS/alpha-run.json")" = "$(jq -cS . <<<"$ALPHA")" ]
   [ "$(jq -r '.enabled' "$HC_JOBS/alpha-run.json")" = true ]
 }
@@ -149,7 +159,7 @@ copy_with() {
   fixed_setup
   LOGGED="$BATS_TEST_TMPDIR/logged"; : > "$LOGGED"
   log() { printf '%s\n' "$*" >> "$LOGGED"; }
-  jq -n '{type: "all", task: "T", schedule: {time: "05:00"}, end: "2026-12-01", enabled: false, created: "2026-11-18"}' \
+  jq -n '{agent: "job-all", task: "T", schedule: {time: "05:00"}, end: "2026-12-01", enabled: false, created: "2026-11-18"}' \
     > "$HC_JOBS/alpha-run.json"
   fixed_place
   grep -q 'alpha-run was a job of the chat.s; its file is moved to ended/' "$LOGGED"
@@ -171,7 +181,7 @@ copy_with() {
 
 @test "fixed_place does not place a file the working folder's own check refuses" {
   fixed_setup
-  jq -c '.run_by = "jobs"' "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
+  jq -c '.run_by = "chat"' "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
   run fixed_place
   [ "$status" -eq 1 ]
   [ ! -e "$HC_JOBS/alpha-run.json" ]
@@ -187,29 +197,29 @@ copy_with() {
 
 @test "a chat file that could not be moved is not taken for a fixed one at the next placing" {
   fixed_setup
-  jq -n '{type: "web", task: "Find a kettle.", schedule: {every_hours: 4}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' \
+  jq -n '{agent: "job-web", task: "Find a kettle.", schedule: {every_hours: 4}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' \
     > "$HC_JOBS/alpha-run.json"
   # The move fails: the first placing leaves the chat file and does not list the name.
   as_claude() { printf '%s\n' "$*" >> "$AS"; [[ "$1" == mv ]] && return 1; "$@"; }
   run fixed_place
   [ "$status" -eq 1 ]
-  [ "$(jq -r .type "$HC_JOBS/alpha-run.json")" = web ]
+  [ "$(jq -r .agent "$HC_JOBS/alpha-run.json")" = job-web ]
   if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
   # The next placing moves it, as it still is a chat file.
   as_claude() { printf '%s\n' "$*" >> "$AS"; "$@"; }
   fixed_place
-  [ "$(jq -r .type "$HC_JOBS/ended/alpha-run.json")" = web ]
+  [ "$(jq -r .agent "$HC_JOBS/ended/alpha-run.json")" = job-web ]
   [ "$(jq -r .agent "$HC_JOBS/alpha-run.json")" = alpha-run ]
 }
 
 @test "a name whose repo file is refused is not listed as placed" {
   fixed_setup
-  jq -c '.run_by = "jobs"' "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
-  jq -n '{type: "web", task: "T", schedule: {time: "05:00"}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/alpha-run.json"
+  jq -c '.run_by = "chat"' "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
+  jq -n '{agent: "job-web", task: "T", schedule: {time: "05:00"}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/alpha-run.json"
   run fixed_place
   [ "$status" -eq 1 ]
   if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
-  [ "$(jq -r .type "$HC_JOBS/alpha-run.json")" = web ]
+  [ "$(jq -r .agent "$HC_JOBS/alpha-run.json")" = job-web ]
 }
 
 @test "a placed file that cannot be removed keeps its name, state and entities" {
@@ -240,4 +250,143 @@ copy_with() {
   [ "$status" -eq 1 ]
   [ -z "$(ls -A "$HC_JOBS/alpha-run.json")" ]
   if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
+}
+
+# repo_with <jq-update> - the repo's file, changed.
+repo_with() {
+  jq -c "$1" "$HC_WORKSPACE/jobs/alpha-run.json" > "$BATS_TEST_TMPDIR/x" \
+    && mv "$BATS_TEST_TMPDIR/x" "$HC_WORKSPACE/jobs/alpha-run.json"
+}
+
+@test "the repo check takes the whole form of section 6, and step A's form, and no end" {
+  fixed_setup
+  repo_with '. + {description: "Looks at the plants", timeout: 900, max_turns: 40,
+                  context: ["handover", "jobs"], after: ["clear_chat"], run_by: "jobs"}'
+  run fixed_check alpha-run "$HC_WORKSPACE/jobs/alpha-run.json"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.description, .timeout, .max_turns, .context, .after, .run_by, .end]' <<<"$output")" \
+    = '["Looks at the plants",900,40,["handover","jobs"],["clear_chat"],"jobs",null]' ]
+  # Task and run_by may be left out; the absent fields are null.
+  printf '{"agent":"alpha-run","schedule":{"time":"23:45","days":["sun"]},"enabled":false}\n' \
+    > "$HC_WORKSPACE/jobs/alpha-run.json"
+  run fixed_check alpha-run "$HC_WORKSPACE/jobs/alpha-run.json"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.task, .run_by, .timeout, .context]' <<<"$output")" = '[null,null,null,null]' ]
+  # The limits at their ceilings pass.
+  repo_with '. + {timeout: 3600, max_turns: 100, context: [], after: []}'
+  run fixed_check alpha-run "$HC_WORKSPACE/jobs/alpha-run.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "the repo check refuses what section 6 does not allow, with its word" {
+  fixed_setup
+  for bad in '.end = "2026-12-02"' '.created = "2026-11-18"' '.notify = "x"' '. + {type: "web"}' \
+             '.timeout = 3601' '.timeout = 0' '.timeout = 1.5' '.timeout = "900"' \
+             '.max_turns = 101' '.max_turns = 0' '.context = ["mail"]' '.context = ["jobs", "jobs"]' \
+             '.context = "jobs"' '.after = ["reboot"]' '.description = ""' \
+             ".description = \"$(printf 'x%.0s' {1..501})\"" '.run_by = "chat"' 'del(.agent)' 'del(.enabled)'; do
+    copy_with "$bad"
+    run _fixed_normal alpha-run "$COPY"
+    [ "$status" -eq 1 ] || { echo "accepted: $bad"; false; }
+    [ "$output" = shape ] || { echo "$bad gave $output"; false; }
+  done
+  for bad in '.schedule = {every_hours: 6}' '.schedule.time = "06:20"' '.schedule.time = "06:31"'; do
+    copy_with "$bad"
+    run _fixed_normal alpha-run "$COPY"
+    [ "$output" = schedule ] || { echo "$bad gave $output"; false; }
+  done
+  for bad in ".task = \"$(printf 'x%.0s' {1..4001})\"" '.task = ""' '.task = 7'; do
+    copy_with "$bad"
+    run _fixed_normal alpha-run "$COPY"
+    [ "$output" = task ] || { echo "task gave $output"; false; }
+  done
+  copy_with ".task = \"$(printf 'x%.0s' {1..4000})\""
+  run _fixed_normal alpha-run "$COPY"
+  [ "$status" -eq 0 ]
+}
+
+@test "with run_by jobs only the repo's fields are compared: schedule, enabled and task are the chat's" {
+  fixed_setup
+  repo_with '. + {description: "d", timeout: 900, max_turns: 40, context: ["jobs"], after: ["clear_chat"], run_by: "jobs"}'
+  copy_with '.task = "Other." | .schedule = {time: "07:15", days: ["mon"]} | .enabled = false'
+  run fixed_check alpha-run "$COPY"
+  [ "$status" -eq 0 ]
+  copy_with 'del(.task)'
+  run fixed_check alpha-run "$COPY"
+  [ "$status" -eq 0 ]
+  for bad in '.description = "e"' 'del(.description)' '.timeout = 901' '.max_turns = 41' \
+             '.context = ["handover"]' '.after = []' '.run_by = "automation"'; do
+    copy_with "$bad"
+    run fixed_check alpha-run "$COPY"
+    [ "$status" -eq 1 ] || { echo "accepted: $bad"; false; }
+    [ "$output" = differs ] || { echo "$bad gave $output"; false; }
+  done
+}
+
+@test "a known name whose agent file is missing keeps the switch's enabled" {
+  fixed_setup
+  fixed_place
+  jq -c '.enabled = false' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/off" && mv "$BATS_TEST_TMPDIR/off" "$HC_JOBS/alpha-run.json"
+  rm "$HC_WORKSPACE/.claude/agents/alpha-run.md"
+  fixed_place
+  [ "$(jq -r '.enabled' "$HC_JOBS/alpha-run.json")" = false ]
+  [ -z "$(ls "$HC_JOBS/ended")" ]
+}
+
+@test "a chat file written over a name that left the repo is moved to ended/, not deleted" {
+  fixed_setup
+  fixed_place
+  jq -n '{agent: "job-web", task: "Find a kettle.", schedule: {every_hours: 4}, end: "2026-12-01", enabled: true, created: "2026-11-18"}' \
+    > "$HC_JOBS/alpha-run.json"
+  rm "$HC_WORKSPACE/jobs/alpha-run.json"
+  fixed_place
+  [ ! -e "$HC_JOBS/alpha-run.json" ]
+  [ "$(jq -r .agent "$HC_JOBS/ended/alpha-run.json")" = job-web ]
+  if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
+}
+
+@test "placing while the placed file is run_by automation takes every field but enabled from the repo" {
+  fixed_setup
+  fixed_place
+  repo_with '. + {description: "d", timeout: 900, run_by: "jobs", schedule: {time: "23:45"}, task: "New."}'
+  jq -c '.enabled = false | .task = "Old."' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  jq -c '.run_by = "automation"' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  fixed_place
+  [ "$(jq -r '.run_by' "$HC_JOBS/alpha-run.json")" = jobs ]
+  [ "$(jq -r '.schedule.time' "$HC_JOBS/alpha-run.json")" = "23:45" ]
+  [ "$(jq -r '.task' "$HC_JOBS/alpha-run.json")" = "New." ]
+  [ "$(jq -r '.description' "$HC_JOBS/alpha-run.json")" = d ]
+  [ "$(jq -r '.enabled' "$HC_JOBS/alpha-run.json")" = false ]
+}
+
+@test "placing once the placed file is run_by jobs keeps schedule, enabled and task and brings the rest" {
+  fixed_setup
+  repo_with '. + {description: "d", timeout: 900, run_by: "jobs"}'
+  fixed_place
+  jq -c '.enabled = false | .task = "Mine." | .schedule = {time: "07:15"}' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  repo_with '. + {description: "e", timeout: 600, max_turns: 30, schedule: {time: "01:00"}, task: "Repo."}'
+  fixed_place
+  [ "$(jq -r '.schedule.time' "$HC_JOBS/alpha-run.json")" = "07:15" ]
+  [ "$(jq -r '.task' "$HC_JOBS/alpha-run.json")" = "Mine." ]
+  [ "$(jq -r '.enabled' "$HC_JOBS/alpha-run.json")" = false ]
+  [ "$(jq -r '.description' "$HC_JOBS/alpha-run.json")" = e ]
+  [ "$(jq -r '.timeout' "$HC_JOBS/alpha-run.json")" = 600 ]
+  [ "$(jq -r '.max_turns' "$HC_JOBS/alpha-run.json")" = 30 ]
+}
+
+@test "placing keeps a placed run_by jobs file without a task without one" {
+  fixed_setup
+  repo_with '. + {description: "d", run_by: "jobs"}'
+  fixed_place
+  jq -c 'del(.task)' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  fixed_place
+  [ "$(jq -r 'has("task")' "$HC_JOBS/alpha-run.json")" = false ]
+}
+
+@test "a missing placed file is placed whole from the repo" {
+  fixed_setup
+  repo_with '. + {description: "d", run_by: "jobs", schedule: {time: "23:45"}}'
+  fixed_place
+  [ "$(jq -r '.schedule.time' "$HC_JOBS/alpha-run.json")" = "23:45" ]
+  [ "$(jq -r '.task' "$HC_JOBS/alpha-run.json")" = "Test." ]
 }

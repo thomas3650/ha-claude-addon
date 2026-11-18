@@ -19,7 +19,7 @@ stub_curl() {
 # good_file [json] - writes the agent's result file and an older marker.
 good_file() {
   mkdir -p "$HC_RESULTS" "$HC_STATE"
-  MARKER="$HC_STATE/run.started"
+  MARKER="$HC_STATE/run-alpha.started"
   : > "$MARKER"
   touch -t 202001010000 "$MARKER"
   printf '%s' "${1:-{\"count\":3,\"verdict\":\"3 ting\",\"text\":\"a\\nb\"\}}" > "$HC_RESULTS/house-check.json"
@@ -29,9 +29,9 @@ refused() {
   run publish_result house-check "$MARKER"
   [ "$status" -eq 1 ]
   [ ! -e "$SENT/args" ]
-  [ ! -e "$HC_STATE/result.body" ]
-  [ ! -e "$HC_STATE/result.in" ]
-  [ ! -e "$HC_STATE/result.err" ]
+  [ ! -e "$HC_STATE/result-house-check.body" ]
+  [ ! -e "$HC_STATE/result-house-check.in" ]
+  [ ! -e "$HC_STATE/result-house-check.err" ]
 }
 
 @test "a good result is raised as one event with five fields" {
@@ -44,8 +44,8 @@ refused() {
   [ "$(jq -r '.count' "$SENT/body")" = "3" ]
   [ "$(jq -r '.verdict' "$SENT/body")" = "3 ting" ]
   [ "$(jq -r '.text' "$SENT/body")" = $'a\nb' ]
-  [ ! -e "$HC_STATE/result.body" ]
-  [ ! -e "$HC_STATE/result.err" ]
+  [ ! -e "$HC_STATE/result-house-check.body" ]
+  [ ! -e "$HC_STATE/result-house-check.err" ]
 }
 
 @test "the token and the text are not on curl's command line or in the log" {
@@ -233,4 +233,48 @@ refused() {
   grep -q -- '-d {"command":"run","outcome":"ok","agent":"house-check"}' "$SENT/args"
   raise_outcome ping ok
   grep -q -- '-d {"command":"ping","outcome":"ok"} ' "$SENT/args"
+}
+
+@test "result_body is one check for every run: a count that is absent gives 0, notify is false" {
+  load_lib options env result
+  printf '%s' '{"verdict":"v","text":"t"}' > "$BATS_TEST_TMPDIR/r.json"
+  run result_body "$BATS_TEST_TMPDIR/r.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"verdict":"v","text":"t","count":0,"notify":false}' ]
+}
+
+@test "a result with both count and notify passes, and so does either alone" {
+  load_lib options env result
+  printf '%s' '{"count":4,"notify":true,"verdict":"v","text":"t"}' > "$BATS_TEST_TMPDIR/r.json"
+  run result_body "$BATS_TEST_TMPDIR/r.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"verdict":"v","text":"t","count":4,"notify":true}' ]
+  printf '%s' '{"notify":true,"verdict":"v","text":"t"}' > "$BATS_TEST_TMPDIR/r.json"
+  run result_body "$BATS_TEST_TMPDIR/r.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "a notify that is not true or false is refused as type" {
+  load_lib options env result
+  printf '%s' '{"notify":"true","verdict":"v","text":"t"}' > "$BATS_TEST_TMPDIR/r.json"
+  run result_body "$BATS_TEST_TMPDIR/r.json"
+  [ "$status" -ne 0 ]
+  printf '%s\n' "$output" > "$BATS_TEST_TMPDIR/err"
+  [ "$(_result_reason "$BATS_TEST_TMPDIR/err")" = type ]
+}
+
+@test "a result with count and notify is raised as the same five-field event, without notify" {
+  load_lib options env result; stub_curl
+  good_file '{"count":2,"notify":true,"verdict":"v","text":"t"}'
+  publish_result house-check "$MARKER"
+  [ "$(jq -c 'keys' "$SENT/body")" = '["agent","count","text","time","verdict"]' ]
+  [ "$(jq -r '.count' "$SENT/body")" = "2" ]
+}
+
+@test "a result without a count is raised with count 0" {
+  load_lib options env result; stub_curl
+  good_file '{"verdict":"v","text":"t"}'
+  publish_result house-check "$MARKER"
+  [ "$(jq -r '.count' "$SENT/body")" = "0" ]
+  [ "$(jq -r '.agent' "$SENT/body")" = "house-check" ]
 }

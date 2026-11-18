@@ -62,6 +62,9 @@ install_managed_settings
 start_ingress
 { check_proxy; check_extra_mcp; } &
 start_chat
+# A run's request to clear the chat that a restart left: carried out now,
+# after jobs_startup and once the chat has started.
+jobs_after_run
 logged_in || log "Claude Code is not logged in: open the add-on's web terminal and follow the steps shown"
 prune_handover
 pruned="$(date +%F)"
@@ -78,6 +81,9 @@ while true; do
     # 1 means standard input is closed; wait instead of spinning.
     if (( rc == 1 )); then sleep 5 & wait $!; fi
   fi
+  # On every pass, so after each command too: a run that asked for the chat
+  # to be cleared has it cleared within five seconds of its end.
+  jobs_after_run
   ticks=$((ticks + 1))
   if (( ticks % 6 == 0 )); then chat_alive || start_chat; fi
   # Retention ran at start; here once on each new day.

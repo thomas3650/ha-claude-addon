@@ -50,7 +50,7 @@ done
 
 # run_memory <variable> - writes the memory to the log and stores the
 # outcome in the named variable: ok, empty or failed. The outcome is not
-# printed, for the reason run_morning gives. Until it is framed, the output
+# printed, for the reason run_agent gives. Until it is framed, the output
 # is in a file only root can read; what the reading prints on standard
 # error is thrown away.
 run_memory() {

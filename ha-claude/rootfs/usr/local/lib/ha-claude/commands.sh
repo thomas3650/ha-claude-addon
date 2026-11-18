@@ -66,8 +66,9 @@ handle_command() {
       ;;
     sync)
       # No job runs under a gate or a policy replaced halfway: the running
-      # jobs end first, and none starts meanwhile, as only a tick starts one
-      # and no command is handled until the sync has ended.
+      # jobs end first, and none starts meanwhile, as only a tick or a
+      # command starts one and no command is handled until the sync has
+      # ended.
       declare -F jobs_wait_idle >/dev/null && jobs_wait_idle
       sync_workspace
       ensure_layout
@@ -118,23 +119,20 @@ handle_command() {
       fi
       ;;
     morning)
-      # The run is waited for here: until it has ended, no other command is
-      # handled, so a second "morning" runs after the first one. With the
-      # option morning_chat off, the chat is left alone.
-      local outcome=failed
-      log "commands: the morning run starts"
-      declare -F fixed_run_begin >/dev/null && fixed_run_begin "${HC_MORNING_AGENT:-}"
-      run_morning outcome
-      declare -F fixed_run_end >/dev/null && fixed_run_end "${HC_MORNING_AGENT:-}" "$outcome"
-      if [[ "$outcome" != not_configured && "$(opt_bool '.morning_chat' true)" == true ]] \
-         && ! clear_chat "$(opening_prompt "$outcome")"; then
-        log "commands: there is no chat session to present the morning run"
+      # The run of the file the option morning_job names, in the job
+      # runner: started now and not waited for (job_command). Without such
+      # a file it is not configured, and nothing else is done.
+      local morning
+      morning="$(opt '.morning_job' '')"
+      if declare -F fixed_is >/dev/null && [[ -n "$morning" ]] && fixed_is "$morning"; then
+        log "commands: the morning run starts"
+        job_command "$morning"
+      else
+        raise_outcome morning not_configured "" command
       fi
-      raise_outcome morning "$outcome"
       ;;
     report)
-      # Waited for here, like the morning run: until it has ended, no other
-      # command is handled.
+      # Waited for here: until it has ended, no other command is handled.
       local outcome=failed
       run_report outcome "$arg"
       raise_outcome report "$outcome"
@@ -146,16 +144,23 @@ handle_command() {
       raise_outcome memory "$outcome"
       ;;
     run)
-      # Waited for here, like the morning run. The chat session is left
-      # alone. The agent's name goes into the event only when it is a name.
+      # A file from the repo runs in the job runner: started now and not
+      # waited for (job_command). Any other agent is run here and waited
+      # for: until it has ended, no other command is handled. The chat
+      # session is left alone. The agent's name goes into the event only
+      # when it is a name.
+      if declare -F fixed_is >/dev/null && fixed_is "$arg"; then
+        job_command "$arg"
+        return 0
+      fi
       local outcome=failed
       declare -F fixed_run_begin >/dev/null && fixed_run_begin "$arg"
       run_agent outcome "$arg"
       declare -F fixed_run_end >/dev/null && fixed_run_end "$arg" "$outcome"
       if run_name_ok "$arg"; then
-        raise_outcome run "$outcome" "$arg"
+        raise_outcome run "$outcome" "$arg" command
       else
-        raise_outcome run "$outcome"
+        raise_outcome run "$outcome" "" command
       fi
       ;;
     jobs)

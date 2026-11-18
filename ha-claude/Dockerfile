@@ -27,6 +27,7 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 RUN useradd --no-create-home --home-dir /data/home --shell /bin/bash --uid 1500 claude
 
 COPY rootfs/ /
+COPY schemas/ /usr/share/ha-claude/schemas/
 
 LABEL io.hass.version="${BUILD_VERSION}" io.hass.type="app" io.hass.arch="${BUILD_ARCH}"
 

@@ -1,132 +1,8 @@
 load helpers
 
-# A stand-in for Claude Code. as_claude scrubs the environment, so the
-# stand-in reads what to do from a file beside itself: the mode on the first
-# line, the file to write on the second.
-stub_claude() {
-  STUB="$BATS_TEST_TMPDIR/stub"
-  mkdir -p "$STUB" "$HC_WORKSPACE/.claude/agents" "$HC_HANDOVER"
-  touch "$HC_WORKSPACE/.claude/agents/morning-briefing.md"
-  TODAY="$(date +%F)"
-  TODAY_FILE="$HC_HANDOVER/$TODAY.md"
-  printf '%s\n%s\n' "$1" "$TODAY_FILE" > "$STUB/mode"
-  cat > "$STUB/claude" <<'EOT'
-#!/usr/bin/env bash
-here="$(dirname "$0")"
-{ read -r mode; read -r file; } < "$here/mode"
-printf '%s\n' "$@" > "$here/argv"
-env > "$here/env"
-pwd -P > "$here/cwd"
-echo "stand-in output"
-case "$mode" in
-  write) printf '# written\n' > "$file" ;;
-  error) printf '# written\n' > "$file"; exit 1 ;;
-  nothing) ;;
-  hang) exec sleep 30 ;;
-esac
-EOT
-  chmod +x "$STUB/claude"
-  export HC_CLAUDE_BIN="$STUB/claude"
-  export HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
-}
-
-@test "without the agent file the outcome is not_configured and nothing is run" {
-  load_lib options env morning
-  stub_claude write
-  rm "$HC_WORKSPACE/.claude/agents/morning-briefing.md"
-  run_morning got
-  [ "$got" = "not_configured" ]
-  [ ! -e "$STUB/argv" ]
-}
-
-@test "a run that writes today's file is ok" {
-  load_lib options env morning
-  stub_claude write
-  run_morning got
-  [ "$got" = "ok" ]
-}
-
-@test "the run is the named agent, without a terminal, with the date, the file and the turn limit" {
-  load_lib options env morning
-  stub_claude write
-  run_morning got
-  args="$(cat "$STUB/argv")"
-  [[ "$args" == *$'-p\n'*"Today is $TODAY."* ]]
-  [[ "$args" == *"$TODAY_FILE"* ]]
-  [[ "$args" == *$'--agent\nmorning-briefing'* ]]
-  [[ "$args" == *$'--max-turns\n40'* ]]
-  [[ "$args" == *"--no-session-persistence"* ]]
-  [[ "$args" == *$'--permission-mode\ndefault'* ]]
-  [[ "$args" != *"dangerously"* ]]
-}
-
-@test "the run is in the working folder, with automatic memory off and without the token" {
-  load_lib options env morning
-  stub_claude write
-  export SUPERVISOR_TOKEN=tok-123
-  run_morning got
-  [ "$(cat "$STUB/cwd")" = "$(cd "$HC_WORKSPACE" && pwd -P)" ]
-  grep -qx "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1" "$STUB/env"
-  run grep "tok-123\|SUPERVISOR" "$STUB/env"
-  [ "$status" -eq 1 ]
-}
-
-@test "the run's output goes to a file in the state folder and nowhere else" {
-  load_lib options env morning
-  stub_claude write
-  run_morning got > "$BATS_TEST_TMPDIR/out" 2> "$BATS_TEST_TMPDIR/err"
-  [ ! -s "$BATS_TEST_TMPDIR/out" ]
-  run grep "stand-in output" "$BATS_TEST_TMPDIR/err"
-  [ "$status" -eq 1 ]
-  [ "$(cat "$HC_STATE/morning.log")" = "stand-in output" ]
-  [ "$(stat -c %a "$HC_STATE/morning.log" 2>/dev/null || stat -f %Lp "$HC_STATE/morning.log")" = "600" ]
-}
-
-@test "a run that ends with an error is failed, also when it wrote the file" {
-  load_lib options env morning
-  stub_claude error
-  run_morning got
-  [ "$got" = "failed" ]
-}
-
-@test "a run that writes nothing is failed" {
-  load_lib options env morning
-  stub_claude nothing
-  run_morning got
-  [ "$got" = "failed" ]
-}
-
-@test "a file from earlier in the day that the run did not touch is failed" {
-  load_lib options env morning
-  stub_claude nothing
-  printf '# earlier\n' > "$TODAY_FILE"
-  touch -t 202001010000 "$TODAY_FILE"
-  run_morning got
-  [ "$got" = "failed" ]
-  [ "$(cat "$TODAY_FILE")" = "# earlier" ]
-}
-
-@test "a run that takes longer than the limit is timeout" {
-  load_lib options env morning
-  stub_claude hang
-  set_options '{"morning_timeout":1}'
-  started=$SECONDS
-  run_morning got
-  [ "$got" = "timeout" ]
-  (( SECONDS - started < 10 ))
-}
-
-@test "the turn limit comes from the options, and a value that is not a number gives the default" {
-  load_lib options env morning
-  stub_claude write
-  set_options '{"morning_max_turns":12}'
-  run_morning got
-  [[ "$(cat "$STUB/argv")" == *$'--max-turns\n12'* ]]
-  set_options '{"morning_max_turns":"many","morning_timeout":"long"}'
-  run_morning got
-  [ "$got" = "ok" ]
-  [[ "$(cat "$STUB/argv")" == *$'--max-turns\n40'* ]]
-}
+# What morning.sh gives the runner: the Jobs line of a run's context, and the
+# chat's opening after a run that clears the chat. The run itself, with the
+# handover rule, is in runner.bats.
 
 @test "the opening prompt is one line of fixed text for each outcome" {
   load_lib options env morning
@@ -148,111 +24,45 @@ EOT
   [[ "$ok" != *"proposal"* ]]
 }
 
-@test "the morning run starts from a handover folder with nothing that reads as instructions" {
-  load_lib options env retention morning
-  stub_claude write
-  touch "$HC_HANDOVER/CLAUDE.md"
-  run_morning got 2>/dev/null
-  [ "$got" = "ok" ]
-  [ ! -e "$HC_HANDOVER/CLAUDE.md" ]
-}
-
-
-@test "the morning run is marked as unattended" {
-  load_lib options env morning
-  stub_claude write
-  run_morning got
-  grep -qx "HA_CLAUDE_UNATTENDED=morning-briefing" "$STUB/env"
-}
-
-@test "an ok morning run raises its result when it left a good one, and is ok without one" {
-  load_lib options env morning result
-  stub_claude write
-  export SUPERVISOR_TOKEN=tok-123
-  curl() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"; cat > /dev/null; }
-  run_morning got
-  [ "$got" = "ok" ]
-  [ ! -e "$BATS_TEST_TMPDIR/curl-args" ]
-  mkdir -p "$HC_RESULTS"
-  cat > "$STUB/claude" <<EOT
-#!/usr/bin/env bash
-printf '# written\n' > "$TODAY_FILE"
-printf '{"count":1,"verdict":"v","text":"t"}' > "$HC_RESULTS/morning-briefing.json"
-EOT
-  run_morning got
-  [ "$got" = "ok" ]
-  grep -q "/events/ha_claude_result" "$BATS_TEST_TMPDIR/curl-args"
-}
-
-@test "the morning run starts without yesterday's result file" {
-  load_lib options env morning result
-  stub_claude write
-  mkdir -p "$HC_RESULTS"
-  printf '{"count":1,"verdict":"old","text":"old"}' > "$HC_RESULTS/morning-briefing.json"
-  export SUPERVISOR_TOKEN=tok-123
-  curl() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"; cat > /dev/null; }
-  run_morning got
-  [ "$got" = "ok" ]
-  [ ! -e "$HC_RESULTS/morning-briefing.json" ]
-  [ ! -e "$BATS_TEST_TMPDIR/curl-args" ]
-}
-
-@test "a failed morning run raises no result" {
-  load_lib options env morning result
-  stub_claude error
-  export SUPERVISOR_TOKEN=tok-123
-  curl() { printf '%s\n' "$*" >> "$BATS_TEST_TMPDIR/curl-args"; cat > /dev/null; }
-  mkdir -p "$HC_RESULTS"
-  printf '{"count":1,"verdict":"v","text":"t"}' > "$HC_RESULTS/morning-briefing.json"
-  run_morning got
-  [ "$got" = "failed" ]
-  [ ! -e "$BATS_TEST_TMPDIR/curl-args" ]
-}
-
 # A job with a result: its file, its state's last run, and its result's age.
 job_with_result() {
   mkdir -p "$HC_JOBS" "$HC_JOB_RESULTS" "$HC_JOB_STATE"
-  jq -n --argjson on "$2" '{type: "web", task: "SECRET TASK", schedule: {every_hours: 4},
+  jq -n --argjson on "$2" '{agent: "job-web", task: "SECRET TASK", schedule: {every_hours: 4},
                             end: "2099-01-01", enabled: $on, created: "2026-11-18"}' > "$HC_JOBS/$1.json"
   printf '{"verdict":"SECRET","text":"t","notify":false}' > "$HC_JOB_RESULTS/$1.json"
   touch -t "$3" "$HC_JOB_RESULTS/$1.json"
   jq -n --argjson last "$4" '{status: "ok", last_run: $last}' > "$HC_JOB_STATE/$1.json"
 }
 
-@test "the prompt lists the jobs that have a result, old when it is from before the last run or the job is off" {
+@test "the Jobs line lists the jobs that have a result, old when it is from before the last run or the job is off" {
   load_lib options env result morning jobs
-  stub_claude write
   export HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   # The results are from 2026-01-01 00:00; the last runs before or after.
   job_with_result a-new true 202601010000 1000
   job_with_result b-old true 202601010000 1893456000
   job_with_result c-off false 202601010000 1000
   mkdir -p "$HC_JOBS"
-  jq -n '{type: "web", task: "t", schedule: {every_hours: 4}, end: "2099-01-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/d-none.json"
-  run_morning got
-  args="$(cat "$STUB/argv")"
-  [[ "$args" == *$'\nJobs: a-new, b-old (old), c-off (old)'* ]]
+  jq -n '{agent: "job-web", task: "t", schedule: {every_hours: 4}, end: "2099-01-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/d-none.json"
+  args="$(_morning_jobs)"
+  [ "$args" = 'Jobs: a-new, b-old (old), c-off (old)' ]
   [[ "$args" != *"d-none"* ]]
   [[ "$args" != *"SECRET"* ]]
 }
 
-@test "without a job result the prompt has no line for the jobs" {
+@test "without a job result there is no Jobs line" {
   load_lib options env result morning jobs
-  stub_claude write
-  run_morning got
-  [[ "$(cat "$STUB/argv")" != *"Jobs:"* ]]
+  [ -z "$(_morning_jobs)" ]
 }
 
 @test "the Jobs line leaves out fixed names" {
   load_lib options env layout result morning jobs fixed
-  stub_claude write
+  export HC_LIMIT_BIN="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   ensure_layout
   job_with_result a-new true 202601010000 1000
   job_with_result alpha-run true 202601010000 1000
   mkdir -p "$HC_WORKSPACE/jobs"
   jq -nc '{agent: "alpha-run", run_by: "automation", schedule: {time: "06:30"}, task: "Test.", enabled: true}' > "$HC_WORKSPACE/jobs/alpha-run.json"
-  run_morning got
-  args="$(cat "$STUB/argv")"
-  [[ "$args" == *$'\nJobs: a-new'* ]]
+  args="$(_morning_jobs)"
+  [ "$args" = 'Jobs: a-new' ]
   [[ "$args" != *"alpha-run"* ]]
 }
