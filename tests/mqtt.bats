@@ -338,7 +338,7 @@ msg() { cat "$PUB/$(tr '/' '_' <<<"$1")"; }
   grep -qx 'services:' "$BATS_TEST_DIRNAME/../ha-claude/config.yaml"
   grep -qx '  - mqtt:want' "$BATS_TEST_DIRNAME/../ha-claude/config.yaml"
   grep -q 'mosquitto-clients' "$BATS_TEST_DIRNAME/../ha-claude/Dockerfile"
-  grep -q ' jobs mqtt commands; do' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
+  grep -q ' jobs fixed mqtt commands; do' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
   grep -qx '  mqtt_listen_stop' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
 }
 

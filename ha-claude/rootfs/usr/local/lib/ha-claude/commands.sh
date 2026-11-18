@@ -71,6 +71,7 @@ handle_command() {
       declare -F jobs_wait_idle >/dev/null && jobs_wait_idle
       sync_workspace
       ensure_layout
+      declare -F fixed_place >/dev/null && fixed_place
       install_managed_settings
       if [[ "${HC_SYNC_RESULT:-ok}" == same && "$(opt_bool '.chat_resume' false)" == true ]]; then
         # Nothing new, and the conversation is kept: the chat is left alone
