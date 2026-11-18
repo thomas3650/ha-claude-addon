@@ -240,6 +240,10 @@ job_next() {
 # Assistant is told through it. Nothing is told until a later file fills it.
 declare -F jobs_on_change >/dev/null || jobs_on_change() { :; }
 
+# True when jobs may start; a later file makes it false while Home Assistant
+# cannot see them.
+declare -F jobs_can_run >/dev/null || jobs_can_run() { return 0; }
+
 # _job_state <name> - prints the job's state, or {} when it has none.
 _job_state() {
   jq -c 'if type == "object" then . else {} end' "$HC_JOB_STATE/$1.json" 2>/dev/null || echo '{}'
@@ -638,6 +642,9 @@ jobs_tick() {
   done < <(_jobs_order "$today")
   rm -f -- "$copy"
   _jobs_prune_seen "$today"
+  # The files are checked and their state kept either way; without a way to
+  # show them in Home Assistant, none runs.
+  jobs_can_run || return 0
   parallel="$(_morning_number '.jobs_parallel' 3)"
   (( parallel >= 1 )) || parallel=1
   (( parallel <= 10 )) || parallel=10

@@ -62,18 +62,21 @@ clear_result() {
   as_claude rm -f -- "$HC_RESULTS/$1.json" </dev/null >/dev/null 2>&1 || true
 }
 
-# claude_copy <file> <copy> <bytes> <seconds> - copies a file the Claude
+# claude_copy <file> <copy> <bytes> <seconds> [tail] - copies a file the Claude
 # user may swap at any moment into a file only root can reach, the way
 # publish_result explains below: the Claude user reads it, with a time limit,
 # and no more than one byte over the size cap. Returns 0 with the copy, 1
 # when it could not be read in time (the copy is removed) and 2 when it is
-# larger than the cap (the copy is removed).
+# larger than the cap (the copy is removed). With tail, the copy is the
+# file's last <bytes> bytes, and a larger file is not refused.
 claude_copy() {
   local file="$1" copy="$2" bytes="$3" wait_s="$4" size rc=0
+  local -a reader=(head -c "$((bytes + 1))")
+  [[ "${5:-}" == tail ]] && reader=(tail -c "$bytes")
   rm -f "$copy"
   ( umask 077; : > "$copy" )
   as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$wait_s" \
-    head -c "$((bytes + 1))" -- "$file" </dev/null >>"$copy" 2>/dev/null &
+    "${reader[@]}" -- "$file" </dev/null >>"$copy" 2>/dev/null &
   wait $! || rc=$?
   if (( rc != 0 )); then
     rm -f "$copy"

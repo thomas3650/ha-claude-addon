@@ -320,6 +320,41 @@ the type, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
 to true). What Claude printed is kept in `/data/state/job-<name>.log`, left
 out of backups.
 
+### The jobs in Home Assistant
+
+The add-on asks the Supervisor for the MQTT broker (the service
+`mqtt:want`, which the Mosquitto add-on provides). Without a broker the
+add-on works as before: the job files are checked and their state kept, the
+log says once that there is no broker, and no job runs. The broker's login
+is written for root only into the MQTT clients' own config files, never on a
+command line.
+
+Each job is a device entity of "HA Claude jobs", made by MQTT discovery
+with retained messages under `homeassistant/<component>/ha_claude_job_<name>_<key>/config`:
+
+| Entity | Shows |
+|---|---|
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
+| `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
+| `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
+| `switch.ha_claude_job_<name>_enabled` | Turns the job on or off |
+
+The state is one retained JSON message on `ha_claude/jobs/<name>/state`,
+published after every change. Text in it is cleaned of control characters.
+When a job ends or its file is gone, its entities are removed with empty
+retained messages; at start every job is published again and the entities
+of jobs whose file has gone are removed.
+
+The switch's commands arrive on `ha_claude/jobs/<name>/enabled/set`. Only
+`ON` or `OFF` is taken, only for an existing job file, and `ON` only while
+fewer than 10 other jobs are enabled. The add-on then changes `enabled` in
+the file and nothing else, as the Claude user. Retained commands are
+ignored.
+
+When a run's `notify` goes from false to true, the add-on raises the event
+`ha_claude_job_notify` with `job` and `finding`, once for that run.
+
 ## The report
 
 On the command `report` the add-on runs the file `.claude/report` from the

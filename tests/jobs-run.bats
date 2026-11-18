@@ -402,7 +402,7 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
 
 @test "the add-on loads the jobs after the result and before the commands, fails stale runs at start and stops the runs" {
   f="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
-  grep -q ' result run report memory jobs commands; do' "$f"
+  grep -q ' result run report memory jobs mqtt commands; do' "$f"
   grep -qx 'jobs_startup' "$f"
   grep -qx '  jobs_stop' "$f"
 }
