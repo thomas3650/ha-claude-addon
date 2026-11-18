@@ -199,6 +199,11 @@ the morning run's does, so a hook in the working folder can tell a run
 nobody is watching from the chat session. The chat session never has that
 variable.
 
+For a fixed agent ("Fixed jobs") whose working folder's `.claude/policy.json`
+has `jobs.fixed_log` true, the environment also holds `HA_CLAUDE_JOB` with
+the agent's name, for `run` and the morning run alike. Without the flag, or
+when the policy is missing or unreadable, it is not set.
+
 As in a morning run, nothing can be asked: a tool that the working folder's
 settings do not allow is refused.
 
@@ -376,6 +381,32 @@ In this version Home Assistant's own automations start the fixed jobs; the
 tick starts none. The list of its tool calls is read from
 `/data/results/fixed/<name>.log.jsonl` and needs the policy flag
 `jobs.fixed_log` in the working folder.
+
+The file has exactly these fields; a file with others, or with a `type` or
+an `end`, is refused:
+
+| Field | Value |
+|---|---|
+| `agent` | the file's name, and a file `.claude/agents/<name>.md` must exist |
+| `run_by` | `automation` |
+| `schedule` | `time` as `HH:MM`, and optionally `days` (`mon` to `sun`; all days when left out) |
+| `task` | the task, at most 4000 characters |
+| `enabled` | `true` or `false` |
+
+The add-on places the files at start and after every `sync`. A placed file
+keeps its `enabled`, which is the switch's choice; every other field comes
+from the working folder, so an edit of the file in `/data/jobs/` is
+overwritten at the next placing. A file the working folder has refused is not
+placed. A fixed file removed from the working folder is deleted from
+`/data/jobs/` with its entities. A chat job with a fixed job's name is moved
+to `ended/` and the fixed job takes its place.
+
+`run <agent>` and the morning run of a fixed agent set that job's state: the
+status is `running` at the start, then `ok`, `failed` or `timeout`, with
+`last_run`, `finding` and `text` (the verdict and text of the run's result,
+when the run wrote one) and `next_run` worked out again. This does not change
+the outcome of the run. The morning prompt's `Jobs:` line ("The morning run")
+leaves fixed jobs out.
 
 When a run's `notify` goes from false to true, the add-on raises the event
 `ha_claude_job_notify` with `job` and `finding`, once for that run: not
