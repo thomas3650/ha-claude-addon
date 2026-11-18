@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.17.0...v1.0.0) (2026-11-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* the chat's job files change form: `type` is replaced by `agent`, and a file with `type` is invalid (shape) and must be written again.
+
+### Features
+
+* one flow and one format for every job ([#62](https://github.com/thomas3650/ha-claude-addon/issues/62)) ([3a23d6d](https://github.com/thomas3650/ha-claude-addon/commit/3a23d6dabdc735255b9bcfe0a107503573b52c0a))
+
 ## [0.17.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.16.0...v0.17.0) (2026-11-18)
 
 
