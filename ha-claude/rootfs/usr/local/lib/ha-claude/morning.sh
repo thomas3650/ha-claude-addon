@@ -31,6 +31,8 @@ _morning_jobs() {
   local -a items=()
   declare -F job_list >/dev/null || return 0
   while read -r name; do
+    # A fixed job's result is its own agent's, not the chat's to tell of.
+    declare -F fixed_is >/dev/null && fixed_is "$name" && continue
     file="$HC_JOB_RESULTS/$name.json"
     [[ -f "$file" ]] || continue
     mtime="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || continue

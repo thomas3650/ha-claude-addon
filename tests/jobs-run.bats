@@ -449,3 +449,105 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   run grep -e kettle -e 299 -e "At the shop" -e "below 300" "$ARGS"
   [ "$status" -eq 1 ]
 }
+
+# fixed_job <name> [time] - a fixed job: the file in the working folder, its
+# agent, and the placed copy. The agents are made up.
+fixed_job() {
+  mkdir -p "$HC_WORKSPACE/jobs" "$HC_WORKSPACE/.claude/agents"
+  jq -nc --arg n "$1" --arg t "${2:-06:30}" \
+    '{agent: $n, run_by: "automation", schedule: {time: $t}, task: "Test.", enabled: true}' \
+    > "$HC_WORKSPACE/jobs/$1.json"
+  touch "$HC_WORKSPACE/.claude/agents/$1.md"
+  cp "$HC_WORKSPACE/jobs/$1.json" "$HC_JOBS/$1.json"
+}
+
+@test "a fixed job is checked, given its next run and never started" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state alpha-run .status)" = idle ]
+  [ "$(state alpha-run .error)" = null ]
+  next="$(state alpha-run .next_run)"
+  [[ "$next" =~ ^[0-9]+$ ]]
+  (( next > $(date +%s) - 86400 && next <= $(date +%s) + 8 * 86400 ))
+  [ "$(_job_date "$next" %H:%M)" = 06:30 ]
+  [ -z "$(jobs_running)" ]
+  [ ! -e "$STUB/starts" ]
+  [ ! -e "$HC_JOB_STATE/seen/alpha-run" ]
+  [ ! -e "$HC_JOB_STATE/alpha-run.pid" ]
+}
+
+@test "a fixed job is not ended after 28 days" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  jq -n --arg d "$(days_after "$TODAY" -40)" '{first_seen: $d, status: "idle"}' > "$HC_JOB_STATE/alpha-run.json"
+  jobs_tick
+  [ -f "$HC_JOBS/alpha-run.json" ]
+  [ ! -e "$HC_JOBS/ended/alpha-run.json" ]
+  [ "$(state alpha-run .status)" = idle ]
+}
+
+@test "fixed jobs come first and outside the cap" {
+  load_jobs quiet
+  load_lib fixed
+  export HC_JOB_FILES=2
+  for n in ja jb jc; do job_file "$n"; done
+  fixed_job alpha-run
+  run jobs_tick
+  jobs_wait_idle
+  [[ "$output" == *"3 job files; only the first 2"* ]]
+  [ -f "$HC_JOB_STATE/alpha-run.json" ]
+  [ "$(state alpha-run .status)" = idle ]
+}
+
+@test "a fixed job does not count towards the 10" {
+  load_jobs quiet
+  load_lib fixed
+  set_options '{"jobs_parallel":10}'
+  for n in a b c d e f g h i j; do job_file "j$n"; done
+  fixed_job alpha-run
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state jj .status)" != invalid ]
+  [ "$(state jj .error)" != limit ]
+  [ "$(state alpha-run .status)" = idle ]
+}
+
+@test "a fixed file that differs is invalid, with no next run" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  jq -c '.task = "Other."' "$HC_WORKSPACE/jobs/alpha-run.json" > "$HC_JOBS/alpha-run.json"
+  jobs_tick
+  [ "$(state alpha-run .status)" = invalid ]
+  [ "$(state alpha-run .error)" = differs ]
+  [ "$(state alpha-run .next_run)" = null ]
+  [ ! -e "$STUB/starts" ]
+}
+
+@test "a fixed job that is off has no next run; one that ran keeps its status" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  jq -c '.enabled = false' "$HC_WORKSPACE/jobs/alpha-run.json" > "$HC_JOBS/alpha-run.json"
+  jq -n '{status: "failed", error: "timeout", last_run: 5}' > "$HC_JOB_STATE/alpha-run.json"
+  jobs_tick
+  [ "$(state alpha-run .status)" = failed ]
+  [ "$(state alpha-run .next_run)" = null ]
+  [ ! -e "$STUB/starts" ]
+}
+
+@test "a fixed job that is running is left alone" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  jq -n '{status: "running", next_run: 7}' > "$HC_JOB_STATE/alpha-run.json"
+  sleep 30 & echo $! > "$HC_JOB_STATE/alpha-run.pid"
+  jobs_tick
+  kill $! 2>/dev/null || true
+  [ "$(state alpha-run .status)" = running ]
+  [ "$(state alpha-run .next_run)" = 7 ]
+}
