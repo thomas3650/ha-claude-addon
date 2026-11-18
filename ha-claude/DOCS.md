@@ -199,6 +199,11 @@ the morning run's does, so a hook in the working folder can tell a run
 nobody is watching from the chat session. The chat session never has that
 variable.
 
+For a fixed agent ("Fixed jobs") whose working folder's `.claude/policy.json`
+has `jobs.fixed_log` true, the environment also holds `HA_CLAUDE_JOB` with
+the agent's name, for `run` and the morning run alike. Without the flag, or
+when the policy is missing or unreadable, it is not set.
+
 As in a morning run, nothing can be asked: a tool that the working folder's
 settings do not allow is refused.
 
@@ -343,7 +348,7 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 
 | Entity | Shows |
 |---|---|
-| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
 | `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
 | `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
 | `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
@@ -363,6 +368,45 @@ The switch's commands arrive on `ha_claude/jobs/<name>/enabled/set`. Only
 fewer than 10 other jobs are enabled. The add-on then changes `enabled` in
 the file and nothing else, as the Claude user. Retained commands are
 ignored.
+
+### Fixed jobs
+
+A fixed job is a file `jobs/<name>.json` in the working folder, named after
+the agent it runs, for a run that belongs to the house and not to a chat.
+The add-on places each one in `/data/jobs/` as a job, so Home Assistant
+shows it with the same entities and switches it on and off like any job;
+`run_by` in its state says what starts it, and `type` is empty. A fixed job
+is outside the limit of 10 enabled jobs and is never ended after 28 days.
+In this version Home Assistant's own automations start the fixed jobs; the
+tick starts none. The list of its tool calls is read from
+`/data/results/fixed/<name>.log.jsonl` and needs the policy flag
+`jobs.fixed_log` in the working folder.
+
+The file has exactly these fields; a file with others, or with a `type` or
+an `end`, is refused:
+
+| Field | Value |
+|---|---|
+| `agent` | the file's name, and a file `.claude/agents/<name>.md` must exist |
+| `run_by` | `automation` |
+| `schedule` | `time` as `HH:MM`, and optionally `days` (`mon` to `sun`; all days when left out) |
+| `task` | the task, at most 4000 characters |
+| `enabled` | `true` or `false` |
+
+The add-on places the files at start and after every `sync`. A placed file
+keeps its `enabled`, which is the switch's choice; every other field comes
+from the working folder, so an edit of the file in `/data/jobs/` is
+overwritten at the next placing. A file the working folder has refused is not
+placed. A fixed file removed from the working folder is deleted from
+`/data/jobs/` with its entities. A chat job with a fixed job's name is moved
+to `ended/` and the fixed job takes its place.
+
+`run <agent>` and the morning run of a fixed agent set that job's state: the
+status is `running` at the start, then `ok`, `failed` or `timeout`, with
+`last_run`, `finding` and `text` (the verdict and text of the run's result,
+when the run wrote one) and `next_run` worked out again. This does not change
+the outcome of the run. The morning prompt's `Jobs:` line ("The morning run")
+leaves fixed jobs out.
 
 When a run's `notify` goes from false to true, the add-on raises the event
 `ha_claude_job_notify` with `job` and `finding`, once for that run: not

@@ -178,10 +178,13 @@ _mqtt_published() {
 # The log is the Claude user's, so it is read through a copy that user
 # makes: its last 64 KiB, within a few seconds.
 _mqtt_calls() {
-  local copy
+  local copy log="$HC_JOB_RESULTS/$1.log.jsonl"
+  # A fixed job's log is in results/fixed/, which the add-on's own jobs do
+  # not write in.
+  ! fixed_is "$1" || log="$HC_RESULTS/fixed/$1.log.jsonl"
   copy="$(mktemp "$HC_STATE/job-calls.XXXXXX")" || { echo '[]' > "$2"; return 0; }
-  if [[ -e "$HC_JOB_RESULTS/$1.log.jsonl" ]] \
-     && claude_copy "$HC_JOB_RESULTS/$1.log.jsonl" "$copy" 65536 "$HC_RESULT_WAIT" tail; then
+  if [[ -e "$log" ]] \
+     && claude_copy "$log" "$copy" 65536 "$HC_RESULT_WAIT" tail; then
     jq -R 'fromjson? | select(type == "object")' "$copy" 2>/dev/null \
       | jq -cs "$HC_JQ_CLEAN"'
           map({tool: ((.tool // "") | tostring | clean(false) | .[0:200]),
@@ -227,7 +230,7 @@ _mqtt_publish_job() {
            device: {identifiers: ["ha_claude_jobs"], name: "HA Claude jobs"}}
         + if $key == "status" then
             {value_template: "{{ value_json.status }}", json_attributes_topic: $topic,
-             json_attributes_template: "{{ {\"type\": value_json.type, \"schedule\": value_json.schedule, \"end\": value_json.end, \"task\": value_json.task, \"error\": value_json.error, \"calls\": value_json.calls} | tojson }}"}
+             json_attributes_template: "{{ {\"type\": value_json.type, \"schedule\": value_json.schedule, \"end\": value_json.end, \"task\": value_json.task, \"run_by\": value_json.run_by, \"error\": value_json.error, \"calls\": value_json.calls} | tojson }}"}
           elif $key == "next_run" or $key == "last_run" then
             {device_class: "timestamp", value_template: "{{ value_json.\($key) or None }}"}
           elif $key == "finding" then
@@ -246,7 +249,8 @@ _mqtt_publish_job() {
       def time: if type == "number" then todate else null end;
       def text($nl): if type == "string" then clean($nl) else null end;
       $j[0] as $j | $s[0] as $s
-      | {status: ($s.status // "idle"), error: ($s.error // null),
+      | {run_by: ($j.run_by | text(false)),
+         status: ($s.status // "idle"), error: ($s.error // null),
          next_run: ($s.next_run | time), last_run: ($s.last_run | time),
          finding: ($s.finding | text(false)), text: ($s.text | text(true)),
          notify: (if $s.notify == true then "ON" else "OFF" end),
@@ -377,7 +381,7 @@ _mqtt_enabled_others() {
 # are enabled. Only enabled changes; the file is rewritten whole and
 # replaced in one step, as the Claude user, whose folder it is.
 mqtt_on_switch() {
-  local line="$1" topic payload name want copy new
+  local line="$1" topic payload name want
   local re="^$HC_MQTT_PREFIX/([a-z][a-z0-9-]{0,31})/enabled/set\$"
   topic="${line%% *}"
   [[ "$line" == *" "* ]] && payload="${line#* }" || payload=""
@@ -390,22 +394,35 @@ mqtt_on_switch() {
     OFF) want=false ;;
     *) return 0 ;;
   esac
-  copy="$(mktemp "$HC_STATE/job-switch.XXXXXX")" || return 0
+  # The read-to-move of the file is alone against the placing of the fixed
+  # files, whose lock it takes (for every job, so there is one path), or a
+  # placed file written between the two would be written over.
+  # Nothing is published when nothing was tried.
+  _fixed_locked _mqtt_switch_move "$name" "$want" "$payload" || return 0
+  mqtt_publish_job "$name" || true
+}
+
+# _mqtt_switch_move <name> <true|false> <payload> - the read, the rewrite
+# and the move of the job's file, under the fixed lock. A fixed job is
+# outside the limit of 10, as it is outside the cap of the tick.
+_mqtt_switch_move() {
+  local name="$1" want="$2" payload="$3" copy new
+  copy="$(mktemp "$HC_STATE/job-switch.XXXXXX")" || return 1
   new="$copy.new"
   if ! job_read "$name" "$copy"; then
     rm -f -- "$copy"
-    return 0
+    return 1
   fi
-  if [[ "$want" == true ]] && (( $(_mqtt_enabled_others "$name") >= HC_JOBS_MAX )); then
+  if [[ "$want" == true ]] && ! fixed_is "$name" && (( $(_mqtt_enabled_others "$name") >= HC_JOBS_MAX )); then
     log "jobs: $name stays off: $HC_JOBS_MAX other jobs are on"
     rm -f -- "$copy"
-    return 0
+    return 1
   fi
   if ! ( umask 077; jq -cs --argjson on "$want" \
            'if length == 1 and (.[0] | type) == "object" then .[0] | .enabled = $on else error("shape") end' \
            "$copy" > "$new" 2>/dev/null ); then
     rm -f -- "$copy" "$new"
-    return 0
+    return 1
   fi
   # The Claude user writes the new file beside the old one and moves it
   # over it; what it writes comes on standard input, from root's copy.
@@ -416,7 +433,7 @@ mqtt_on_switch() {
     log "jobs: $name could not be switched"
   fi
   rm -f -- "$copy" "$new"
-  mqtt_publish_job "$name" || true
+  return 0
 }
 
 # mqtt_listen_start - starts the listener for the switches when none runs:

@@ -180,7 +180,7 @@ job_due() {
   _job_fields "$job" "$state" || return 1
   [[ "$enabled" == true && "$status" != running ]] || return 1
   today="$(_job_date "$now" %F)" || return 1
-  [[ ! "$today" > "$end" ]] || return 1
+  [[ "$end" == null || ! "$today" > "$end" ]] || return 1
   if (( every > 0 )); then
     (( last < 0 || now - last > every * 3600 - 60 ))
     return
@@ -213,7 +213,8 @@ job_next() {
     done < <(jq -rn --arg d "$today" \
                '$d | strptime("%Y-%m-%d") | mktime as $t | range(0; 8) | $t + . * 86400 | strftime("%Y-%m-%d %u")')
   fi
-  if [[ -z "$next" || "$(_job_date "$next" %F)" > "$end" ]]; then
+  # An end of null is no end: a fixed job's normal form has it.
+  if [[ -z "$next" || ( "$end" != null && "$(_job_date "$next" %F)" > "$end" ) ]]; then
     echo null
   else
     echo "$next"
@@ -582,7 +583,10 @@ _jobs_prune_seen() {
 : "${HC_JOB_FILES:=32}"
 _jobs_order() {
   local name all
+  # The fixed jobs are not the chat's: they have no first sight and are
+  # outside the cap.
   all="$(while read -r name; do
+           declare -F fixed_is >/dev/null && fixed_is "$name" && continue
            printf '%s %s\n' "$(_job_seen "$name" "$1")" "$name"
          done < <(job_list) | sort | cut -d ' ' -f 2)"
   [[ -n "$all" ]] || return 0
@@ -598,6 +602,29 @@ _job_last_day() {
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   jq -rn --arg d "$1" --argjson n "$HC_JOB_DAYS" \
     '$d | strptime("%Y-%m-%d") | mktime + $n * 86400 | strftime("%Y-%m-%d")' 2>/dev/null
+}
+
+# _jobs_tick_fixed <name> <now> <copy> - checks a fixed job's placed file
+# against the working folder's and writes its state: idle unless it has a
+# status of its own (ok, failed, timeout, running), invalid with the word
+# fixed_check gave, and its next run. It is never started here: its run is
+# another's, and it does not end.
+# shellcheck disable=SC2016  # jq's variables, not the shell's
+_jobs_tick_fixed() {
+  local name="$1" now="$2" copy="$3" state job
+  state="$(_job_state "$name")"
+  [[ "$(jq -r '.status // empty' <<<"$state")" == running ]] && return 0
+  if ! job_read "$name" "$copy"; then
+    _job_update "$name" '.status = "invalid" | .error = "unreadable" | .next_run = null'
+    return 0
+  fi
+  if ! job="$(fixed_check "$name" "$copy")"; then
+    _job_update "$name" '.status = "invalid" | .error = $w | .next_run = null' --arg w "$job"
+    return 0
+  fi
+  _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
+    | .error = (if .status == "idle" or .status == "ok" then null else .error end)
+    | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
 }
 
 # jobs_tick - reads the job files, checks them, writes each job's state,
@@ -618,9 +645,19 @@ jobs_tick() {
     [[ -f "$file" ]] || continue
     name="${file##*/}"; name="${name%.json}"
     [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]] && continue
+    # A fixed job's state is its own check's, also while its copy is missing.
+    declare -F fixed_is >/dev/null && fixed_is "$name" && continue
     [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name" && continue
     _job_forget "$name"
   done
+  # The fixed jobs first: they are checked and shown, never started here,
+  # and do not count towards the limit of enabled jobs.
+  if declare -F fixed_list >/dev/null; then
+    while read -r name; do
+      [[ -n "$name" ]] || continue
+      _jobs_tick_fixed "$name" "$now" "$copy"
+    done < <(fixed_list)
+  fi
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   while read -r name; do
     state="$(_job_state "$name")"

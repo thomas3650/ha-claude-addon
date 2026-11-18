@@ -71,6 +71,7 @@ handle_command() {
       declare -F jobs_wait_idle >/dev/null && jobs_wait_idle
       sync_workspace
       ensure_layout
+      declare -F fixed_place >/dev/null && fixed_place
       install_managed_settings
       if [[ "${HC_SYNC_RESULT:-ok}" == same && "$(opt_bool '.chat_resume' false)" == true ]]; then
         # Nothing new, and the conversation is kept: the chat is left alone
@@ -122,7 +123,9 @@ handle_command() {
       # option morning_chat off, the chat is left alone.
       local outcome=failed
       log "commands: the morning run starts"
+      declare -F fixed_run_begin >/dev/null && fixed_run_begin "${HC_MORNING_AGENT:-}"
       run_morning outcome
+      declare -F fixed_run_end >/dev/null && fixed_run_end "${HC_MORNING_AGENT:-}" "$outcome"
       if [[ "$outcome" != not_configured && "$(opt_bool '.morning_chat' true)" == true ]] \
          && ! clear_chat "$(opening_prompt "$outcome")"; then
         log "commands: there is no chat session to present the morning run"
@@ -146,7 +149,9 @@ handle_command() {
       # Waited for here, like the morning run. The chat session is left
       # alone. The agent's name goes into the event only when it is a name.
       local outcome=failed
+      declare -F fixed_run_begin >/dev/null && fixed_run_begin "$arg"
       run_agent outcome "$arg"
+      declare -F fixed_run_end >/dev/null && fixed_run_end "$arg" "$outcome"
       if run_name_ok "$arg"; then
         raise_outcome run "$outcome" "$arg"
       else

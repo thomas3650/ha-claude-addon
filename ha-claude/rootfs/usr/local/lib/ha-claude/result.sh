@@ -132,6 +132,14 @@ publish_result() {
   fi
   rm -f "$err"
   rm -f "$copy"
+  # A fixed run's finding is read from this body afterwards (fixed_run_end):
+  # kept for root alone, before the body is removed, whether or not Home
+  # Assistant is told. Failing to keep it does not change the result.
+  if ( umask 077; cat -- "$body" > "$HC_STATE/fixed-$agent.body.tmp" ) 2>/dev/null; then
+    mv -f -- "$HC_STATE/fixed-$agent.body.tmp" "$HC_STATE/fixed-$agent.body" 2>/dev/null       || rm -f -- "$HC_STATE/fixed-$agent.body.tmp"
+  else
+    rm -f -- "$HC_STATE/fixed-$agent.body.tmp"
+  fi
   if [[ -z "${SUPERVISOR_TOKEN:-}" ]]; then
     log "result: $agent (not reported: no Supervisor token)"
     rm -f "$body"

@@ -242,3 +242,17 @@ job_with_result() {
   run_morning got
   [[ "$(cat "$STUB/argv")" != *"Jobs:"* ]]
 }
+
+@test "the Jobs line leaves out fixed names" {
+  load_lib options env layout result morning jobs fixed
+  stub_claude write
+  ensure_layout
+  job_with_result a-new true 202601010000 1000
+  job_with_result alpha-run true 202601010000 1000
+  mkdir -p "$HC_WORKSPACE/jobs"
+  jq -nc '{agent: "alpha-run", run_by: "automation", schedule: {time: "06:30"}, task: "Test.", enabled: true}' > "$HC_WORKSPACE/jobs/alpha-run.json"
+  run_morning got
+  args="$(cat "$STUB/argv")"
+  [[ "$args" == *$'\nJobs: a-new'* ]]
+  [[ "$args" != *"alpha-run"* ]]
+}

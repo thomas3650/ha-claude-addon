@@ -4,7 +4,7 @@
 set -uo pipefail
 
 LIB=/usr/local/lib/ha-claude
-for f in paths log options env layout sync managed retention diagnostics web session outcome morning result run report memory jobs mqtt commands; do
+for f in paths log options env layout sync managed retention diagnostics web session outcome morning result run report memory jobs fixed mqtt commands; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
 done
@@ -56,6 +56,8 @@ install_extra_packages
 run_diagnostics
 sync_workspace
 ensure_layout
+# The working folder's fixed jobs are placed in the jobs folder.
+fixed_place
 install_managed_settings
 start_ingress
 { check_proxy; check_extra_mcp; } &
