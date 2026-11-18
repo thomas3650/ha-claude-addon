@@ -60,7 +60,7 @@ _morning_jobs() {
 # stop signal until the run had ended. The run's output can hold what the
 # agent read, so it goes to a file only root can read, not to the log.
 run_morning() {
-  local _rm_today _rm_file _rm_limit _rm_turns _rm_rc=0 _rm_started=$SECONDS _rm_prompt _rm_jobs
+  local _rm_today _rm_file _rm_limit _rm_turns _rm_rc=0 _rm_started=$SECONDS _rm_prompt _rm_jobs _rm_job=()
   local _rm_marker="$HC_STATE/morning.started"
   if ! morning_configured; then
     printf -v "$1" '%s' not_configured
@@ -79,8 +79,11 @@ run_morning() {
   : > "$_rm_marker"
   rm -f "$HC_STATE/morning.log"
   ( umask 077; : > "$HC_STATE/morning.log" )
+  if declare -F fixed_marked >/dev/null && fixed_marked "$HC_MORNING_AGENT"; then
+    _rm_job=(HA_CLAUDE_JOB="$HC_MORNING_AGENT")
+  fi
   ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-      HA_CLAUDE_UNATTENDED="$HC_MORNING_AGENT" \
+      HA_CLAUDE_UNATTENDED="$HC_MORNING_AGENT" ${_rm_job[@]+"${_rm_job[@]}"} \
       "$HC_LIMIT_BIN" "$_rm_limit" "$HC_CLAUDE_BIN" \
       -p "$_rm_prompt" \
       --agent "$HC_MORNING_AGENT" --max-turns "$_rm_turns" --permission-mode default \

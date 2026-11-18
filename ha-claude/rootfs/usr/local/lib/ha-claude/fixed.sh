@@ -247,3 +247,75 @@ _fixed_place() {
 fixed_place() {
   _fixed_locked _fixed_place
 }
+
+# fixed_for_agent <agent> - prints the fixed name whose file has the agent,
+# or fails. A fixed file is named after its agent, and the check holds it so.
+fixed_for_agent() {
+  fixed_is "$1" || return 1
+  [[ "$(jq -r '.agent // empty' "$HC_WORKSPACE/jobs/$1.json" 2>/dev/null)" == "$1" ]] || return 1
+  printf '%s\n' "$1"
+}
+
+# fixed_marked <agent> - true when the agent is fixed and the policy asks
+# for its tool calls to be marked: .jobs.fixed_log is true. A policy that is
+# missing or unreadable marks nothing.
+fixed_marked() {
+  fixed_for_agent "$1" >/dev/null || return 1
+  jq -e '.jobs.fixed_log == true' "$HC_WORKSPACE/.claude/policy.json" >/dev/null 2>&1
+}
+
+# fixed_run_begin <agent> - a fixed run starts: its state says running, with
+# the time and no error. It never stops the run: what cannot be written or
+# published is logged and left.
+fixed_run_begin() {
+  local name
+  name="$(fixed_for_agent "$1")" || return 0
+  mkdir -p "$HC_STATE" 2>/dev/null || true
+  # The finding of this run is only a body written after this point.
+  rm -f -- "$HC_STATE/fixed-$name.body" "$HC_STATE/fixed-$name.started" 2>/dev/null || true
+  : > "$HC_STATE/fixed-$name.started" 2>/dev/null || true
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  _job_update "$name" '.status = "running" | .error = null | .last_run = $now' \
+    --argjson now "$(date +%s)" >/dev/null 2>&1 || log "fixed: $name: the start could not be published"
+  return 0
+}
+
+# fixed_run_end <agent> <outcome> - a fixed run ends: ok, failed or timeout
+# is its status, and not_configured is failed with that error. The finding
+# and the text are the kept result body's verdict and text when that body is
+# from this run, and else stay as they were. The next run is worked out
+# again. Like the start, it never changes the run's outcome.
+fixed_run_end() {
+  local name="$1" outcome="$2" body started now job state status error="null" finding=null text=null
+  name="$(fixed_for_agent "$1")" || return 0
+  body="$HC_STATE/fixed-$name.body"
+  started="$HC_STATE/fixed-$name.started"
+  now="$(date +%s)"
+  case "$outcome" in
+    ok|timeout) status="$outcome" ;;
+    not_configured) status=failed; error='"not_configured"' ;;
+    *) status=failed ;;
+  esac
+  if [[ "$status" == ok && -f "$body" && ! -L "$body" && -f "$started" && ! "$body" -ot "$started" ]]; then
+    finding="$(jq -c '.verdict | if type == "string" then . else null end' "$body" 2>/dev/null)" || finding=null
+    text="$(jq -c '.text | if type == "string" then . else null end' "$body" 2>/dev/null)" || text=null
+    [[ -n "$finding" ]] || finding=null
+    [[ -n "$text" ]] || text=null
+  fi
+  rm -f -- "$started" 2>/dev/null || true
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  _job_update "$name" '.status = $status | .error = $error | .last_end = $now
+      | (if $finding != null then .finding = $finding | .text = $text else . end)' \
+    --arg status "$status" --argjson error "$error" --argjson now "$now" \
+    --argjson finding "$finding" --argjson text "$text" >/dev/null 2>&1 \
+    || log "fixed: $name: the end could not be published"
+  # The next run, from the state as it is now. A job that is not valid has none.
+  state="$(_job_state "$name")"
+  if job="$(_fixed_normal "$name" "$HC_WORKSPACE/jobs/$name.json" 2>/dev/null)"; then
+    # shellcheck disable=SC2016  # jq's variables, not the shell's
+    _job_update "$name" '.next_run = $next' \
+      --argjson next "$(job_next "$job" "$state" "$now")" >/dev/null 2>&1 \
+      || log "fixed: $name: the next run could not be published"
+  fi
+  return 0
+}
