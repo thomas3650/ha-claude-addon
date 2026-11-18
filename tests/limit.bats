@@ -63,3 +63,9 @@ LIMIT="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   [ "$status" -eq 0 ]
   [ "$output" = "the prompt" ]
 }
+
+@test "a command that ends at once costs well under a second, so short commands can run under the limit" {
+  start="$EPOCHREALTIME"
+  for _ in 1 2 3 4 5; do "$LIMIT" 10 sleep 0.1; done
+  awk -v a="$start" -v b="$EPOCHREALTIME" 'BEGIN { exit !(b - a < 3) }'
+}
