@@ -173,5 +173,5 @@ run_it() { run_memory got 2> "$BATS_TEST_TMPDIR/err"; }
 }
 
 @test "the add-on loads the memory command" {
-  grep -q ' report memory commands; do' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
+  grep -q ' report memory jobs commands; do' "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run"
 }

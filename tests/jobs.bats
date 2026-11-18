@@ -144,6 +144,17 @@ refused() {
   refused shape
   printf 'not json' > "$HC_JOBS/price.json"
   refused shape
+  # Two objects, and a key written twice: jq alone would take the last.
+  printf '{"type":"web"}\n{"type":"web"}' > "$HC_JOBS/price.json"
+  refused shape
+  job_file price
+  jq -r '"{\"enabled\":false," + (tojson | .[1:])' "$HC_JOBS/price.json" > "$BATS_TEST_TMPDIR/dup"
+  cp "$BATS_TEST_TMPDIR/dup" "$HC_JOBS/price.json"
+  [ "$(jq -r .enabled "$HC_JOBS/price.json")" = true ]
+  refused shape
+  job_file price '.schedule = {time: "07:10", days: ["mon"]} | .notify = "x"'
+  run job_check price "$HC_JOBS/price.json" "$TODAY" 0
+  [ "$status" -eq 0 ]
   job_file price '.notify = "below 300 kr"'
   run job_check price "$HC_JOBS/price.json" "$TODAY" 0
   [ "$status" -eq 0 ]

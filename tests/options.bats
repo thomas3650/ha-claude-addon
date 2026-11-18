@@ -65,3 +65,13 @@ load helpers
   grep -qx '  morning_chat: bool' "$f"
 }
 
+
+@test "the jobs' options have their defaults and limits" {
+  f="$BATS_TEST_DIRNAME/../ha-claude/config.yaml"
+  grep -qx '  jobs_parallel: 3' "$f"
+  grep -qx '  jobs_parallel: int(1,10)' "$f"
+  grep -qx '  job_timeout: 1800' "$f"
+  grep -qx '  job_timeout: int(60,3600)' "$f"
+  grep -qx '  job_max_turns: 60' "$f"
+  grep -qx '  job_max_turns: int(1,200)' "$f"
+}

@@ -57,3 +57,9 @@ LIMIT="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-limit"
   [ ! -e "$mark" ]
 }
 
+
+@test "the command reads the script's standard input" {
+  run "$LIMIT" 10 cat <<<"the prompt"
+  [ "$status" -eq 0 ]
+  [ "$output" = "the prompt" ]
+}

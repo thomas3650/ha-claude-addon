@@ -16,14 +16,17 @@
 # line; the line feed stays in the text only. The limits count characters,
 # after the cleaning. jq's message goes to standard error; the caller takes
 # from it only which check failed (_result_reason).
-_result_body() {
-  # shellcheck disable=SC2016  # jq's variables, not the shell's
-  jq -cen --arg agent "$1" --arg time "$(date +%FT%T%z)" '
+# The cleaning, in jq, shared with the jobs' results.
+# shellcheck disable=SC2016  # jq's variables, not the shell's
+HC_JQ_CLEAN='
     def clean($nl): explode
       | map(select(((. >= 32 and . != 127 and (. < 128 or . > 159))
                     and (. < 8232 or . > 8238) and (. < 8294 or . > 8297))
                    or ($nl and . == 10)))
-      | implode;
+      | implode;'
+_result_body() {
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  jq -cen --arg agent "$1" --arg time "$(date +%FT%T%z)" "$HC_JQ_CLEAN"'
     [inputs] | if length != 1 then error("shape") else .[0] end
     | if type != "object" or (keys != ["count", "text", "verdict"]) then error("shape") else . end
     | if (.count | type) != "number" or (.count | tojson | test("^(0|[1-9][0-9]{0,3})$") | not)

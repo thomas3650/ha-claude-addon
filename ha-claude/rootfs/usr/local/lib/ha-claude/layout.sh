@@ -10,16 +10,16 @@ ensure_layout() {
   mkdir -p "$HC_HOME" "$HC_HANDOVER" "$HC_RESULTS" "$HC_STATE" "$HC_STATUS" "$HC_WORKSPACE" \
            "$HC_JOBS" "$HC_JOB_STATE"
   if [[ "$(id -u)" != 0 ]]; then
-    mkdir -p "$HC_JOB_RESULTS"
+    mkdir -p "$HC_JOB_RESULTS" "$HC_JOBS/ended"
     return 0
   fi
   chown -R "$HC_USER:$HC_USER" "$HC_HOME" "$HC_HANDOVER"
   # The folder only: what is in it is the Claude user's already, and a
   # recursive change would follow whatever that user put there.
   chown "$HC_USER:$HC_USER" "$HC_RESULTS" "$HC_JOBS"
-  # Inside the results folder, which is the Claude user's: made by that
-  # user, so a link put there is never followed by root.
-  runuser -u "$HC_USER" -- mkdir -p "$HC_JOB_RESULTS" </dev/null 2>/dev/null || true
+  # Inside folders that are the Claude user's: made by that user, so a link
+  # put there is never followed by root.
+  runuser -u "$HC_USER" -- mkdir -p "$HC_JOB_RESULTS" "$HC_JOBS/ended" </dev/null 2>/dev/null || true
   chown -R root:root "$(dirname "$HC_WORKSPACE")" "$HC_STATE" "$HC_STATUS"
   chmod -R u=rwX,go=rX "$(dirname "$HC_WORKSPACE")" "$HC_STATUS"
   chmod 700 "$HC_STATE"

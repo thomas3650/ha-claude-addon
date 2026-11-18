@@ -27,6 +27,7 @@ load helpers
   ensure_layout
   [ -d "$HC_JOBS" ]
   [ -d "$HC_JOB_RESULTS" ]
+  [ -d "$HC_JOBS/ended" ]
   [ -d "$HC_JOB_STATE" ]
 }
 
@@ -41,6 +42,7 @@ load helpers
   ensure_layout
   [ "$(stat -c %U "$HC_JOBS")" = "claude" ]
   [ "$(stat -c %U "$HC_JOB_RESULTS")" = "claude" ]
+  [ "$(stat -c %U "$HC_JOBS/ended")" = "claude" ]
   [ "$(stat -c %U "$HC_JOB_STATE")" = "root" ]
   rm -r "$HC_JOB_RESULTS"
   mkdir -p "$BATS_TEST_TMPDIR/rootdir"

@@ -5,7 +5,7 @@ parse_command() {
   local line="${1//$'\r'/}" word
   word="$(jq -r 'if type == "string" then . elif type == "object" then (.command // "") else "" end' \
             <<<"$line" 2>/dev/null)" || word=""
-  if [[ -z "$word" && "$line" =~ ^([a-z-]+(\ [0-9-]+)?|run\ [a-z][a-z0-9-]*)$ ]]; then
+  if [[ -z "$word" && "$line" =~ ^([a-z-]+(\ [0-9-]+)?|run\ [a-z][a-z0-9-]*|jobs\ tick)$ ]]; then
     word="$line"
   fi
   printf '%s' "$word"
@@ -51,9 +51,12 @@ handle_command() {
   word="$(parse_command "$1")"
   name="${word%% *}"
   [[ "$word" == *" "* ]] && arg="${word#* }"
-  # Only report and run take an argument; anything else with one is not a
-  # command, and run without one is not either.
-  if [[ -n "$arg" && "$name" != report && "$name" != run ]] || [[ -z "$arg" && "$name" == run ]]; then
+  # Only report, run and jobs take an argument; anything else with one is
+  # not a command, and run without one is not either. jobs takes the one
+  # word tick, and nothing else.
+  if [[ -n "$arg" && "$name" != report && "$name" != run && "$name" != jobs ]] \
+     || [[ -z "$arg" && ( "$name" == run || "$name" == jobs ) ]] \
+     || [[ "$name" == jobs && "$arg" != tick ]]; then
     log "commands: ignoring unknown command"
     return 0
   fi
@@ -62,6 +65,10 @@ handle_command() {
       raise_outcome ping ok
       ;;
     sync)
+      # No job runs under a gate or a policy replaced halfway: the running
+      # jobs end first, and none starts meanwhile, as only a tick starts one
+      # and no command is handled until the sync has ended.
+      declare -F jobs_wait_idle >/dev/null && jobs_wait_idle
       sync_workspace
       ensure_layout
       install_managed_settings
@@ -145,6 +152,11 @@ handle_command() {
       else
         raise_outcome run "$outcome"
       fi
+      ;;
+    jobs)
+      # Not waited for: the due jobs start in the background, so the next
+      # command is handled at once. Every 15 minutes, so no outcome is sent.
+      jobs_tick
       ;;
     "")
       [[ -n "${1//[[:space:]]/}" ]] && log "commands: ignoring malformed command"

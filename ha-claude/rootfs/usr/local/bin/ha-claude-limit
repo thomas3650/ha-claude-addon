@@ -6,11 +6,13 @@
 limit="$1"; shift
 grace="${HC_LIMIT_GRACE:-30}"
 # The command leads its own process group where that is possible, so that
-# what it started is stopped with it.
+# what it started is stopped with it. Its standard input is this script's:
+# bash would give a command started with & /dev/null instead, and a job's
+# prompt comes on standard input.
 if command -v setsid >/dev/null 2>&1; then
-  setsid "$@" &
+  setsid "$@" <&0 &
 else
-  "$@" &
+  "$@" <&0 &
 fi
 pid=$!
 stop() { kill "-$1" -- "-$pid" 2>/dev/null || kill "-$1" "$pid" 2>/dev/null; }

@@ -26,6 +26,7 @@ backup_exclude:
   - state/run-*.log
   - state/result.*
   - state/report.out
+  - state/job-*
 options:
   session_name: Home
   extra_packages: []
@@ -38,6 +39,9 @@ options:
   run_max_turns: 60
   morning_chat: true
   chat_resume: false
+  jobs_parallel: 3
+  job_timeout: 1800
+  job_max_turns: 60
 schema:
   session_name: str
   repo_url: str?
@@ -57,3 +61,6 @@ schema:
   run_max_turns: int(1,200)
   morning_chat: bool
   chat_resume: bool
+  jobs_parallel: int(1,10)
+  job_timeout: int(60,3600)
+  job_max_turns: int(1,200)
