@@ -1,17 +1,25 @@
 # Folders under /data and who owns them:
 #   workspace  root, read-only for the Claude user
 #   handover   Claude user
-#   results    Claude user
+#   results    Claude user, and its jobs folder
+#   jobs       Claude user (the job files the chat writes)
 #   home       Claude user
 #   status     root, readable by the Claude user
-#   state, repo, options file   root only
+#   state, repo, options file   root only (state holds the jobs' own state)
 ensure_layout() {
-  mkdir -p "$HC_HOME" "$HC_HANDOVER" "$HC_RESULTS" "$HC_STATE" "$HC_STATUS" "$HC_WORKSPACE"
-  [[ "$(id -u)" == 0 ]] || return 0
+  mkdir -p "$HC_HOME" "$HC_HANDOVER" "$HC_RESULTS" "$HC_STATE" "$HC_STATUS" "$HC_WORKSPACE" \
+           "$HC_JOBS" "$HC_JOB_STATE"
+  if [[ "$(id -u)" != 0 ]]; then
+    mkdir -p "$HC_JOB_RESULTS"
+    return 0
+  fi
   chown -R "$HC_USER:$HC_USER" "$HC_HOME" "$HC_HANDOVER"
   # The folder only: what is in it is the Claude user's already, and a
   # recursive change would follow whatever that user put there.
-  chown "$HC_USER:$HC_USER" "$HC_RESULTS"
+  chown "$HC_USER:$HC_USER" "$HC_RESULTS" "$HC_JOBS"
+  # Inside the results folder, which is the Claude user's: made by that
+  # user, so a link put there is never followed by root.
+  runuser -u "$HC_USER" -- mkdir -p "$HC_JOB_RESULTS" </dev/null 2>/dev/null || true
   chown -R root:root "$(dirname "$HC_WORKSPACE")" "$HC_STATE" "$HC_STATUS"
   chmod -R u=rwX,go=rX "$(dirname "$HC_WORKSPACE")" "$HC_STATUS"
   chmod 700 "$HC_STATE"
