@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "job-repo.schema.json",
+  "title": "A job file from the repo",
+  "description": "A job from the repo: <name>.json in the working folder's jobs/, with its own agent. Fields as in job-fields.schema.json. The schedule is a time on a quarter hour and days only; there is no end, created or notify. The chat may write the file only with run_by jobs, with the repo's fields equal to those in place: the gate and the add-on check that, as they check what job-fields.schema.json lists.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent", "schedule", "enabled"],
+  "properties": {
+    "agent": { "$ref": "job-fields.schema.json#/$defs/agent" },
+    "task": { "$ref": "job-fields.schema.json#/$defs/task" },
+    "description": { "$ref": "job-fields.schema.json#/$defs/description" },
+    "schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time"],
+      "properties": {
+        "time": { "$ref": "job-fields.schema.json#/$defs/quarterTime" },
+        "days": { "$ref": "job-fields.schema.json#/$defs/days" }
+      }
+    },
+    "enabled": { "$ref": "job-fields.schema.json#/$defs/enabled" },
+    "timeout": { "$ref": "job-fields.schema.json#/$defs/timeout" },
+    "max_turns": { "$ref": "job-fields.schema.json#/$defs/max_turns" },
+    "context": { "$ref": "job-fields.schema.json#/$defs/context" },
+    "after": { "$ref": "job-fields.schema.json#/$defs/after" },
+    "run_by": { "$ref": "job-fields.schema.json#/$defs/run_by" }
+  }
+}

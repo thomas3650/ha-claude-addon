@@ -382,20 +382,6 @@ jobs_wait_idle() {
   done
 }
 
-# _job_result_body <file> - prints the job's result, cleaned, or fails as
-# _result_body does: exactly verdict, text and notify, notify a bool, the
-# same cleaning and the same limits.
-_job_result_body() {
-  jq -cen "$HC_JQ_CLEAN"'
-    [inputs] | if length != 1 then error("shape") else .[0] end
-    | if type != "object" or (keys != ["notify", "text", "verdict"]) then error("shape") else . end
-    | if (.notify | type) != "boolean" or (.verdict | type) != "string" or (.text | type) != "string"
-      then error("type") else . end
-    | {verdict: (.verdict | clean(false)), text: (.text | clean(true)), notify}
-    | if (.verdict | length) > 120 or (.text | length) > 4000 then error("length") else . end
-  ' "$1"
-}
-
 # _job_result <name> <marker> - writes the job's result, cleaned, to
 # HC_STATE/job-<name>.body, which only root can read. It is read as
 # publish_result reads one, through a copy the Claude user makes, into
@@ -422,7 +408,7 @@ _job_result() {
     return 1
   fi
   rc=0
-  ( umask 077; _job_result_body "$copy" > "$body" 2> "$err" ) || rc=$?
+  ( umask 077; result_body "$copy" > "$body" 2> "$err" ) || rc=$?
   (( rc == 0 )) || rm -f -- "$body"
   (( rc == 0 )) || log "jobs: $name: the result is malformed ($(_result_reason "$err"))"
   rm -f -- "$copy" "$err"

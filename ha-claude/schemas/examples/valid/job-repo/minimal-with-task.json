@@ -1,0 +1,1 @@
+{"agent":"plant-check","description":"Looks at the plants","task":"Also check the fern.","schedule":{"time":"23:45","days":["sun"]},"enabled":false}

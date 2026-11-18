@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "job-chat.schema.json",
+  "title": "A job file written by the chat",
+  "description": "A job the chat creates: <name>.json in the jobs folder outside the working folder's jobs/. Fields as in job-fields.schema.json. The chat's agent is one of job-private, job-web and job-all; the file has no description, timeout, max_turns, context, after or run_by. What a schema cannot say is listed in job-fields.schema.json: `end` at most 28 days after `created`, at most 10 enabled jobs, a key written twice.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["agent", "task", "schedule", "enabled", "end", "created"],
+  "properties": {
+    "agent": { "enum": ["job-private", "job-web", "job-all"] },
+    "task": { "$ref": "job-fields.schema.json#/$defs/task" },
+    "schedule": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["every_hours"],
+          "properties": { "every_hours": { "$ref": "job-fields.schema.json#/$defs/everyHours" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["time"],
+          "properties": {
+            "time": { "$ref": "job-fields.schema.json#/$defs/time" },
+            "days": { "$ref": "job-fields.schema.json#/$defs/days" }
+          }
+        }
+      ]
+    },
+    "enabled": { "$ref": "job-fields.schema.json#/$defs/enabled" },
+    "end": { "$ref": "job-fields.schema.json#/$defs/date" },
+    "created": { "$ref": "job-fields.schema.json#/$defs/date" },
+    "notify": { "$ref": "job-fields.schema.json#/$defs/notify" }
+  }
+}

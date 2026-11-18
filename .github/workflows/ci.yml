@@ -19,7 +19,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y bats shellcheck jq
+        run: sudo apt-get update && sudo apt-get install -y bats shellcheck jq python3-pip
+
+      - name: Install the schema validator
+        run: python3 -m pip install --break-system-packages jsonschema==4.26.0
 
       - name: Lint
         run: shellcheck -x -s bash ha-claude/rootfs/usr/local/lib/ha-claude/*.sh ha-claude/rootfs/usr/local/bin/* tests/container.sh

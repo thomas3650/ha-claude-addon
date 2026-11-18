@@ -1,7 +1,8 @@
 # The result file: an agent that ran without a terminal may leave a short
-# result in the results folder, <agent>.json, with exactly three fields:
-# count, verdict and text. The add-on's own script checks it and raises it
-# as the event ha_claude_result. This is the one place where words Claude
+# result in the results folder, <agent>.json: verdict and text, and
+# optionally count and notify, the same for every run (the schema is
+# schemas/result.schema.json). The add-on's own script checks it and raises
+# it as the event ha_claude_result. This is the one place where words Claude
 # wrote leave the add-on, so the file is trusted with nothing: its kind, its
 # age, its size and its shape are checked, and its content is never logged
 # and never put on a command line.
@@ -9,13 +10,6 @@
 : "${HC_RESULT_WAIT:=5}"
 : "${HC_LIMIT_BIN:=/usr/local/bin/ha-claude-limit}"
 
-# _result_body <agent> <file> - prints the event's body, or fails when the
-# file is not one result: one JSON value and no more. The count must be
-# written as a plain whole number, so what is sent is what was checked.
-# Control characters are removed, and the characters that break or turn a
-# line; the line feed stays in the text only. The limits count characters,
-# after the cleaning. jq's message goes to standard error; the caller takes
-# from it only which check failed (_result_reason).
 # The cleaning, in jq, shared with the jobs' results.
 # shellcheck disable=SC2016  # jq's variables, not the shell's
 HC_JQ_CLEAN='
@@ -24,17 +18,30 @@ HC_JQ_CLEAN='
                     and (. < 8232 or . > 8238) and (. < 8294 or . > 8297))
                    or ($nl and . == 10)))
       | implode;'
-_result_body() {
-  # shellcheck disable=SC2016  # jq's variables, not the shell's
-  jq -cen --arg agent "$1" --arg time "$(date +%FT%T%z)" "$HC_JQ_CLEAN"'
+
+# result_body <file> - prints the result, cleaned, as one JSON object
+# {verdict, text, count, notify}, or fails when the file is not one result:
+# one JSON value and no more, with verdict and text, and count and notify
+# only besides. One check for every run, a fixed run's and a job's. A count
+# that is absent is 0 and a notify that is absent is false, so what reads
+# the body never meets an empty value. The count must be written as a
+# plain whole number, 0 to 9999, so what is sent is what was checked.
+# Control characters are removed, and the characters that break or turn a
+# line; the line feed stays in the text only. The limits count characters,
+# after the cleaning. jq's message goes to standard error; the caller takes
+# from it only which check failed (_result_reason).
+result_body() {
+  jq -cen "$HC_JQ_CLEAN"'
     [inputs] | if length != 1 then error("shape") else .[0] end
-    | if type != "object" or (keys != ["count", "text", "verdict"]) then error("shape") else . end
-    | if (.count | type) != "number" or (.count | tojson | test("^(0|[1-9][0-9]{0,3})$") | not)
+    | if type != "object" or ((keys - ["count", "notify"]) != ["text", "verdict"]) then error("shape") else . end
+    | if has("count") and ((.count | type) != "number" or (.count | tojson | test("^(0|[1-9][0-9]{0,3})$") | not))
       then error("count") else . end
-    | if (.verdict | type) != "string" or (.text | type) != "string" then error("type") else . end
-    | {agent: $agent, count: .count, verdict: (.verdict | clean(false)), text: (.text | clean(true)), time: $time}
+    | if (.verdict | type) != "string" or (.text | type) != "string"
+         or (has("notify") and (.notify | type) != "boolean")
+      then error("type") else . end
+    | {verdict: (.verdict | clean(false)), text: (.text | clean(true)), count: (.count // 0), notify: (.notify // false)}
     | if (.verdict | length) > 120 or (.text | length) > 4000 then error("length") else . end
-  ' "$2"
+  ' "$1"
 }
 
 # _result_reason <file> - prints which check refused the result, one fixed
@@ -125,13 +132,23 @@ publish_result() {
     log "result: $agent: too large"
     return 1
   fi
-  if ! ( umask 077; _result_body "$agent" "$copy" > "$body" 2> "$err" ); then
+  if ! ( umask 077; result_body "$copy" > "$body" 2> "$err" ); then
     log "result: $agent: malformed ($(_result_reason "$err"))"
     rm -f "$copy" "$body" "$err"
     return 1
   fi
   rm -f "$err"
   rm -f "$copy"
+  # The event: the cleaned result as the agent's, with the time. notify is
+  # not in it; it is for a job's runner.
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  if ! ( umask 077; jq -c --arg agent "$agent" --arg time "$(date +%FT%T%z)" \
+           '{agent: $agent, count, verdict, text, time: $time}' "$body" > "$body.event" \
+         && mv -f -- "$body.event" "$body" ); then
+    rm -f "$body" "$body.event"
+    log "result: $agent: malformed (other)"
+    return 1
+  fi
   # A fixed run's finding is read from this body afterwards (fixed_run_end):
   # kept for root alone, before the body is removed, whether or not Home
   # Assistant is told. Failing to keep it does not change the result.

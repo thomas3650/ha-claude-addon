@@ -27,7 +27,8 @@ case "$mode" in
   write) printf '{"verdict":"Lowest 299 kr","text":"At the shop\\nsince Monday","notify":true}' > "$file" ;;
   quiet) printf '{"verdict":"Nothing","text":"","notify":false}' > "$file" ;;
   dirty) printf '{"verdict":"a\\u2028b\\nc","text":"x\\u0000y\\nz","notify":false}' > "$file" ;;
-  extra) printf '{"verdict":"v","text":"t","notify":true,"count":1}' > "$file" ;;
+  extra) printf '{"verdict":"v","text":"t","notify":true,"more":1}' > "$file" ;;
+  counted) printf '{"verdict":"v","text":"t","notify":true,"count":1}' > "$file" ;;
   string) printf '{"verdict":"v","text":"t","notify":"true"}' > "$file" ;;
   long) printf '{"verdict":"v","text":"%s","notify":false}' "$(printf 'x%.0s' {1..4001})" > "$file" ;;
   error) printf '{"verdict":"v","text":"t","notify":true}' > "$file"; exit 1 ;;
@@ -214,6 +215,15 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
     [ "$(state price .status)" = failed ]
     [ "$(state price .finding)" = null ]
   done
+}
+
+@test "a job's result may carry a count, and may leave notify out (one result for every run)" {
+  load_jobs counted
+  job_file price
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state price .status)" = ok ]
+  [ "$(state price .notify)" = true ]
 }
 
 @test "a result is cleaned as the result event's is" {

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "result.schema.json",
+  "title": "A run's result file",
+  "description": "The one result every run writes: <agent>.json (or <job>.json) in the results folder. verdict and text always; count and notify optional, for every job. The event ha_claude_result carries count as 0 when the result has none, and a missing notify is false; notify counts only for a job with a notify condition. A schema cannot say, and the add-on's check keeps: one JSON value and no more, the limits counted in characters after the control characters are removed, a count written as a plain whole number, and a result newer than its run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "text"],
+  "properties": {
+    "verdict": { "type": "string", "maxLength": 120, "description": "One line." },
+    "text": { "type": "string", "maxLength": 4000 },
+    "count": { "type": "integer", "minimum": 0, "maximum": 9999 },
+    "notify": { "type": "boolean" }
+  }
+}
