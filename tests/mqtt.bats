@@ -590,3 +590,17 @@ notifies() { grep -c ha_claude_job_notify "$SENT/args" 2>/dev/null || true; }
   [ "$(jq -c .type <<<"$(msg ha_claude/jobs/old/state)")" = null ]
   [ "$(jq -c .type <<<"$(msg ha_claude/jobs/job-web/state)")" = null ]
 }
+
+@test "a job file's description is published and is an attribute of the status sensor" {
+  load_mqtt
+  mqtt_config
+  fixed_job alpha-run
+  jq -c '.description = "What it does."' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/d" && mv "$BATS_TEST_TMPDIR/d" "$HC_JOBS/alpha-run.json"
+  job_file price
+  mqtt_publish_job alpha-run
+  mqtt_publish_job price
+  [ "$(jq -r .description <<<"$(msg ha_claude/jobs/alpha-run/state)")" = "What it does." ]
+  [ "$(jq -c .description <<<"$(msg ha_claude/jobs/price/state)")" = null ]
+  tmpl="$(msg homeassistant/sensor/ha_claude_job_alpha_run_status/config | jq -r .json_attributes_template)"
+  [[ "$tmpl" == *"value_json.description"* ]]
+}

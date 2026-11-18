@@ -171,8 +171,11 @@ summary, or by saying that the run did not finish. The runner does not do
 this itself: it leaves a request, which only root can read, in
 `/data/state/after/`, and the command loop carries it out within five
 seconds, and then raises the outcome, so the phone hears of the run after
-the briefing is in the chat. A request a restart left is carried out at the
-next start. With the option `morning_chat` off, the chat is left alone: the
+the briefing is in the chat. The command loop is busy while a command
+runs, so a `sync` or another long command delays the chat's clearing and
+the outcome until the loop is free; the run's result is raised when the
+run ends, whatever the loop is doing. A request a restart left is carried
+out at the next start. With the option `morning_chat` off, the chat is left alone: the
 conversation in it goes on, and nothing is sent to it. The outcome is raised
 either way.
 
@@ -284,10 +287,25 @@ starts the jobs that are due.
 | `notify` | Optional. The condition, in words, under which the run sets `notify` in its result, at most 500 characters |
 | `created` | The day the file was first written, `YYYY-MM-DD` |
 
-The file is one JSON object, with no field written twice; no other field
-is accepted, so a file in the old form, with `type` for the agent, is `invalid`
-(`shape`) and must be written again. The form is
-`/usr/share/ha-claude/schemas/job-chat.schema.json`. A tick reads at most 32 job files, the ones the add-on saw
+Every job file has one format: one JSON object, with no field written twice
+and no field the schemas do not name, so a file in the old form, with `type`
+for the agent, is `invalid` (`shape`) and must be written again. The fields,
+their types and ranges are in
+`/usr/share/ha-claude/schemas/job-fields.schema.json`; a chat's job is
+`job-chat.schema.json` (the fields above and no others) and a file from the
+working folder is `job-repo.schema.json` ("Fixed jobs"). What a schema cannot
+say (the 28 days, the 10 enabled jobs, a key written twice) is listed in the
+fields schema and checked by the add-on. Who may set which field:
+
+| Field | The chat's job | A file from the working folder |
+|---|---|---|
+| `agent` | one of the three | its own name |
+| `task`, `schedule`, `enabled` | the chat | the repo gives them; for `run_by` `jobs` the chat's are kept after the first placing |
+| `end`, `created`, `notify` | the chat | not allowed |
+| `description`, `timeout`, `max_turns`, `context`, `after`, `run_by` | not allowed | the repo alone |
+
+A file with the schema's form but a value outside its range is refused with
+the check's word below. A tick reads at most 32 job files, the ones the add-on saw
 first; the others are skipped, and the log says so. At most 10 jobs are enabled at once; an 11th is
 `invalid`, the one the add-on saw last. The add-on reads a file only
 through a copy the Claude user makes, within a few seconds and up to
@@ -351,7 +369,7 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 
 | Entity | Shows |
 |---|---|
-| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type` (the agent without `job-`: `private`, `web` or `all`), `schedule`, `end`, `task`, `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type` (the agent without `job-`: `private`, `web` or `all`), `schedule`, `end`, `task`, `description` (the file's own text, which the view shows when the file has no `task`), `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
 | `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
 | `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
 | `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
@@ -404,7 +422,7 @@ a `created` or a `notify`, is refused (`shape`). The form is
 | `timeout`, `max_turns` | optional: the run's limits, at most 3600 seconds and 100 turns |
 | `context` | optional: any of `handover` and `jobs` |
 | `after` | optional: `clear_chat` |
-| `run_by` | optional: `automation` or `jobs` |
+| `run_by` | optional: `automation` or `jobs`; a file without it acts as `automation` |
 
 The placed file is checked against the working folder's: every field but
 `enabled` must be the same (`differs` otherwise); while the working folder's
@@ -413,10 +431,18 @@ file has `run_by` `jobs`, only `agent`, `description`, `timeout`,
 and `task` are then the chat's. The check's words are `shape`, `agent`,
 `task`, `schedule` and `differs`.
 
-The add-on places the files at start and after every `sync`. A placed file
-keeps its `enabled`, which is the switch's choice; every other field comes
-from the working folder, so an edit of the file in `/data/jobs/` is
-overwritten at the next placing. A file the working folder has refused is not
+The add-on places the files at start and after every `sync`. A file that
+is missing in `/data/jobs/` is placed whole from the working folder. For a
+placed file, who owns a field depends on its `run_by`: while it is
+`automation` (or has none), every field but `enabled` comes from the working
+folder, so an edit in `/data/jobs/` is overwritten at the next placing and
+the working folder's change of schedule, task or `run_by` lands. Once it
+is `jobs`, placing brings `agent`, `description`, `timeout`, `max_turns`,
+`context`, `after` and `run_by` from the working folder and keeps the placed
+file's `schedule`, `enabled` and `task`, which are the chat's; a later change
+to the working folder's schedule then does not reach the placed file, and is
+only the default for a file that is missing. `enabled` is always the
+switch's choice. A file the working folder has refused is not
 placed. A fixed file removed from the working folder is deleted from
 `/data/jobs/` with its entities; a file in its place that is not a valid
 fixed file is the chat's, and is moved to `ended/` instead. While a placed

@@ -344,3 +344,49 @@ repo_with() {
   [ "$(jq -r .agent "$HC_JOBS/ended/alpha-run.json")" = job-web ]
   if grep -qx alpha-run "$HC_JOB_STATE/fixed.list"; then false; fi
 }
+
+@test "placing while the placed file is run_by automation takes every field but enabled from the repo" {
+  fixed_setup
+  fixed_place
+  repo_with '. + {description: "d", timeout: 900, run_by: "jobs", schedule: {time: "23:45"}, task: "New."}'
+  jq -c '.enabled = false | .task = "Old."' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  jq -c '.run_by = "automation"' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  fixed_place
+  [ "$(jq -r '.run_by' "$HC_JOBS/alpha-run.json")" = jobs ]
+  [ "$(jq -r '.schedule.time' "$HC_JOBS/alpha-run.json")" = "23:45" ]
+  [ "$(jq -r '.task' "$HC_JOBS/alpha-run.json")" = "New." ]
+  [ "$(jq -r '.description' "$HC_JOBS/alpha-run.json")" = d ]
+  [ "$(jq -r '.enabled' "$HC_JOBS/alpha-run.json")" = false ]
+}
+
+@test "placing once the placed file is run_by jobs keeps schedule, enabled and task and brings the rest" {
+  fixed_setup
+  repo_with '. + {description: "d", timeout: 900, run_by: "jobs"}'
+  fixed_place
+  jq -c '.enabled = false | .task = "Mine." | .schedule = {time: "07:15"}' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  repo_with '. + {description: "e", timeout: 600, max_turns: 30, schedule: {time: "01:00"}, task: "Repo."}'
+  fixed_place
+  [ "$(jq -r '.schedule.time' "$HC_JOBS/alpha-run.json")" = "07:15" ]
+  [ "$(jq -r '.task' "$HC_JOBS/alpha-run.json")" = "Mine." ]
+  [ "$(jq -r '.enabled' "$HC_JOBS/alpha-run.json")" = false ]
+  [ "$(jq -r '.description' "$HC_JOBS/alpha-run.json")" = e ]
+  [ "$(jq -r '.timeout' "$HC_JOBS/alpha-run.json")" = 600 ]
+  [ "$(jq -r '.max_turns' "$HC_JOBS/alpha-run.json")" = 30 ]
+}
+
+@test "placing keeps a placed run_by jobs file without a task without one" {
+  fixed_setup
+  repo_with '. + {description: "d", run_by: "jobs"}'
+  fixed_place
+  jq -c 'del(.task)' "$HC_JOBS/alpha-run.json" > "$BATS_TEST_TMPDIR/x" && mv "$BATS_TEST_TMPDIR/x" "$HC_JOBS/alpha-run.json"
+  fixed_place
+  [ "$(jq -r 'has("task")' "$HC_JOBS/alpha-run.json")" = false ]
+}
+
+@test "a missing placed file is placed whole from the repo" {
+  fixed_setup
+  repo_with '. + {description: "d", run_by: "jobs", schedule: {time: "23:45"}}'
+  fixed_place
+  [ "$(jq -r '.schedule.time' "$HC_JOBS/alpha-run.json")" = "23:45" ]
+  [ "$(jq -r '.task' "$HC_JOBS/alpha-run.json")" = "Test." ]
+}

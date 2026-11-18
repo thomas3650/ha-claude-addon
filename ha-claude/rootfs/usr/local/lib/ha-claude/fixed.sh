@@ -167,7 +167,7 @@ _fixed_write() {
 
 # _fixed_place_one <name> <previous-list-file> - places one name's file.
 _fixed_place_one() {
-  local name="$1" known="$2" copy new enabled=true word="" repo live=0
+  local name="$1" known="$2" copy new enabled=true word="" repo live=0 mine=0
   repo="$HC_WORKSPACE/jobs/$name.json"
   copy="$(mktemp "$HC_STATE/job-fixed.XXXXXX")" || return 1
   new="$copy.new"
@@ -186,6 +186,9 @@ _fixed_place_one() {
         # A fixed file: the switch's choice is kept, also while the agent's
         # file is missing from the working folder for a while.
         enabled="$(jq -r '.enabled' "$copy")"
+        # Once the file is the jobs system's (run_by jobs), schedule, enabled
+        # and task are the chat's and stay; until then the repo's win.
+        [[ "$(jq -r '.run_by // empty' "$copy" 2>/dev/null)" == jobs ]] && mine=1
       elif ! grep -qx -- "$name" "$known"; then
         # Not one the add-on placed: the chat's own file under a fixed name.
         word=chat
@@ -206,7 +209,13 @@ _fixed_place_one() {
       live=0
     fi
   fi
-  if ! ( umask 077; jq -c --argjson on "$enabled" '.enabled = $on' "$repo" > "$new" ) 2>/dev/null; then
+  if (( mine )) && [[ -f "$copy" ]]; then
+    # The repo's fields, with the chat's three taken from the placed file;
+    # one the placed file lacks stays lacking.
+    ( umask 077; jq -c --slurpfile p "$copy" --argjson on "$enabled" '
+        . as $r | ($p[0] | with_entries(select(.key | IN("schedule", "task")))) as $k
+        | ($r | del(.schedule, .task)) + $k | .enabled = $on' "$repo" > "$new" ) 2>/dev/null || { rm -f -- "$copy" "$new"; return 1; }
+  elif ! ( umask 077; jq -c --argjson on "$enabled" '.enabled = $on' "$repo" > "$new" ) 2>/dev/null; then
     rm -f -- "$copy" "$new"
     return 1
   fi

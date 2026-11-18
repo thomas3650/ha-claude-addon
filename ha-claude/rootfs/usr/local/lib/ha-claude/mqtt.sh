@@ -232,7 +232,7 @@ _mqtt_publish_job() {
            device: {identifiers: ["ha_claude_jobs"], name: "HA Claude jobs"}}
         + if $key == "status" then
             {value_template: "{{ value_json.status }}", json_attributes_topic: $topic,
-             json_attributes_template: "{{ {\"type\": value_json.type, \"schedule\": value_json.schedule, \"end\": value_json.end, \"task\": value_json.task, \"run_by\": value_json.run_by, \"error\": value_json.error, \"calls\": value_json.calls} | tojson }}"}
+             json_attributes_template: "{{ {\"type\": value_json.type, \"schedule\": value_json.schedule, \"end\": value_json.end, \"task\": value_json.task, \"description\": value_json.description, \"run_by\": value_json.run_by, \"error\": value_json.error, \"calls\": value_json.calls} | tojson }}"}
           elif $key == "next_run" or $key == "last_run" then
             {device_class: "timestamp", value_template: "{{ value_json.\($key) or None }}"}
           elif $key == "finding" then
@@ -262,7 +262,7 @@ _mqtt_publish_job() {
          type: (if $repo then null
                 elif $j.agent | IN("job-private", "job-web", "job-all") then $j.agent | ltrimstr("job-")
                 else null end), schedule: (if ($j.schedule | type) == "object" then $j.schedule else null end),
-         end: ($j.end | text(false)), task: ($j.task | text(true)), calls: $c[0]}
+         end: ($j.end | text(false)), task: ($j.task | text(true)), description: ($j.description | text(true)), calls: $c[0]}
     ' > "$cfg" )
   _mqtt_send "$topic" "$cfg" || rc=1
   rm -rf -- "${dir:?}"
