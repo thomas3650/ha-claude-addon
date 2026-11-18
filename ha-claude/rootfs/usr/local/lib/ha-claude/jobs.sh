@@ -582,28 +582,42 @@ job_outcome_command() {
 # job_after <name> <outcome> <by> <job-json> - a file from the repo's after
 # steps, at the end of its run, and its outcome. With clear_chat the chat's
 # session is cleared, which the command loop also handles, so the runner
-# never does it: it writes a request in HC_STATE/after/<name>, which only
-# root can read, "clear the chat, then raise this outcome", and returns
+# never does it: it writes a request (_job_after_request) and returns
 # without waiting for it (jobs_after_run carries it out). Without, the
-# outcome is raised at once. A request that cannot be written is logged,
-# and the outcome raised without the clearing.
+# outcome is raised at once (_job_after_raise). A request that cannot be
+# written is logged, and the outcome raised without the clearing.
 job_after() {
+  _job_after_request "$@" || _job_after_raise "$@"
+}
+
+# _job_after_request <name> <outcome> <by> <job-json> - when the file has
+# the after step clear_chat, writes the request in HC_STATE/after/<name>,
+# which only root can read, "clear the chat, then raise this outcome", whole
+# or not at all. Returns 0 when it was written, 1 when the file has no such
+# step or the request could not be written (logged). The runner writes it
+# before the state that ends the run, so whatever sees the run ended sees
+# its request too.
+_job_after_request() {
   local name="$1" outcome="$2" by="$3" job="$4" command agent dir="$HC_STATE/after"
+  jq -e '(.after // []) | index("clear_chat")' <<<"$job" >/dev/null 2>&1 || return 1
   command="$(job_outcome_command "$name")"
   agent="$(jq -r '.agent' <<<"$job")"
-  if jq -e '(.after // []) | index("clear_chat")' <<<"$job" >/dev/null 2>&1; then
-    # shellcheck disable=SC2016  # jq's variables, not the shell's
-    if ( umask 077; mkdir -p "$dir" && chmod 700 "$dir" \
-           && jq -nc --arg c "$command" --arg o "$outcome" --arg a "$agent" --arg b "$by" \
-                '{command: $c, outcome: $o, agent: $a, by: $b}' > "$dir/.$name.tmp" \
-           && mv -f -- "$dir/.$name.tmp" "$dir/$name" ) 2>/dev/null; then
-      log "jobs: $name: the chat is cleared next"
-      return 0
-    fi
-    rm -f -- "$dir/.$name.tmp"
-    log "jobs: $name: the request to clear the chat could not be written"
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  if ( umask 077; mkdir -p "$dir" && chmod 700 "$dir" \
+         && jq -nc --arg c "$command" --arg o "$outcome" --arg a "$agent" --arg b "$by" \
+              '{command: $c, outcome: $o, agent: $a, by: $b}' > "$dir/.$name.tmp" \
+         && mv -f -- "$dir/.$name.tmp" "$dir/$name" ) 2>/dev/null; then
+    log "jobs: $name: the chat is cleared next"
+    return 0
   fi
-  raise_outcome "$command" "$outcome" "$agent" "$by"
+  rm -f -- "$dir/.$name.tmp"
+  log "jobs: $name: the request to clear the chat could not be written"
+  return 1
+}
+
+# _job_after_raise <name> <outcome> <by> <job-json> - raises the outcome.
+_job_after_raise() {
+  raise_outcome "$(job_outcome_command "$1")" "$2" "$(jq -r '.agent' <<<"$4")" "$3"
 }
 
 # jobs_after_run - carries out the requests the runner left (job_after):
@@ -685,6 +699,11 @@ _job_run() {
     if publish_result "$agent" "$marker"; then status=ok; else status=failed; fi
   fi
   log "jobs: $name ended $status after $((SECONDS - started)) seconds"
+  # A request to clear the chat is written before the state that ends the
+  # run: sync's wait, and anything else that sees the run ended, then sees
+  # the request as well. The outcome itself is raised after the state.
+  local requested=no
+  [[ "$repo" == true ]] && _job_after_request "$name" "$status" "$by" "$job" && requested=yes
   # The next run counts from this one's start, which the state already
   # holds; it is written with the end, in one change, so whoever sees the
   # run ended sees its next run too.
@@ -718,7 +737,7 @@ _job_run() {
       --arg s "$status" --argjson now "$(date +%s)" --argjson next "$next"
   fi
   rm -f -- "$marker" "$body"
-  [[ "$repo" == true ]] && job_after "$name" "$status" "$by" "$job"
+  [[ "$repo" == true && "$requested" == no ]] && _job_after_raise "$name" "$status" "$by" "$job"
   return 0
 }
 
