@@ -59,7 +59,7 @@ days_after() {
 
 job_file() {
   jq -n --arg today "$TODAY" --arg end "$(days_after "$TODAY" 14)" \
-    '{type: "web", task: "Find the lowest price of a kettle.", schedule: {every_hours: 4},
+    '{agent: "job-web", task: "Find the lowest price of a kettle.", schedule: {every_hours: 4},
       end: $end, enabled: true, created: $today}' \
     | jq "${2:-.}" > "$HC_JOBS/$1.json"
 }
@@ -574,4 +574,19 @@ notifies() { grep -c ha_claude_job_notify "$SENT/args" 2>/dev/null || true; }
   wait "$holder"
   [ "$(jq -r .task "$HC_JOBS/alpha-run.json")" = "New." ]
   [ "$(jq -r .enabled "$HC_JOBS/alpha-run.json")" = false ]
+}
+
+@test "type is derived from the agent: web for job-web, and null for a repo file, by its origin" {
+  load_mqtt
+  mqtt_config
+  job_file price
+  job_file other '.agent = "job-private"'
+  job_file old 'del(.agent) | . + {type: "web"}'
+  # A repo file whose agent is job-web is still a repo file.
+  fixed_job job-web
+  for n in price other old job-web; do mqtt_publish_job "$n"; done
+  [ "$(jq -c .type <<<"$(msg ha_claude/jobs/price/state)")" = '"web"' ]
+  [ "$(jq -c .type <<<"$(msg ha_claude/jobs/other/state)")" = '"private"' ]
+  [ "$(jq -c .type <<<"$(msg ha_claude/jobs/old/state)")" = null ]
+  [ "$(jq -c .type <<<"$(msg ha_claude/jobs/job-web/state)")" = null ]
 }

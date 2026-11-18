@@ -3,8 +3,9 @@ load helpers
 # The JSON Schemas of the job files and the result (ha-claude/schemas), held
 # together with the add-on's checks by example files: a valid example passes,
 # an invalid one fails, and an invalid one is named <word>-<what>.json after
-# the word the check gives (the result's check is run here; the job files'
-# check agrees with the same examples in jobs.bats). Needs the Python
+# the word the check gives. The checks are run here on the same examples: the
+# result's (result_body), the chat's job file's (job_check) and the repo
+# file's (_fixed_normal). Needs the Python
 # package jsonschema: without it these tests fail, they do not skip.
 
 SCHEMAS="$BATS_TEST_DIRNAME/../ha-claude/schemas"
@@ -82,4 +83,33 @@ valid() { python3 "$VALIDATE" "$1" "$2"; }
   load_lib
   [ "$HC_SCHEMAS" = /usr/share/ha-claude/schemas ]
   grep -qF "COPY schemas/ $HC_SCHEMAS/" "$BATS_TEST_DIRNAME/../ha-claude/Dockerfile"
+}
+
+# job_word <schema> <file> - runs a job example through the add-on's check
+# for its origin and prints the check's output: the normal form or the word.
+# A chat file as seen on its created day with no other job; a repo file under
+# its agent's name, as the repo's check wants (plant-check when it has none).
+job_word() {
+  if [ "$1" = job-chat ]; then
+    job_check example "$2" 2026-11-18 0
+  else
+    _fixed_normal "$(jq -r '.agent // "plant-check" | strings' "$2" 2>/dev/null || echo plant-check)" "$2"
+  fi
+}
+
+@test "the job examples agree with the add-on's checks, and an invalid one gives its word" {
+  load_lib options env result jobs fixed
+  local f s w
+  for f in "$SCHEMAS"/examples/valid/job-*/*.json; do
+    s="$(basename "$(dirname "$f")")"
+    run job_word "$s" "$f"
+    [ "$status" -eq 0 ] || { echo "the check refused $f: $output"; false; }
+  done
+  for f in "$SCHEMAS"/examples/invalid/job-*/*.json; do
+    s="$(basename "$(dirname "$f")")"
+    w="$(basename "$f")"; w="${w%%-*}"
+    run job_word "$s" "$f"
+    [ "$status" -eq 1 ] || { echo "the check accepted $f"; false; }
+    [ "$output" = "$w" ] || { echo "$f: gave $output"; false; }
+  done
 }

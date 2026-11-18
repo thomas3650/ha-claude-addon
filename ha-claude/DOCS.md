@@ -278,7 +278,7 @@ starts the jobs that are due.
 
 | Field | Holds |
 |---|---|
-| `type` | `private`, `web` or `all`: the job runs as the agent `job-<type>` of the working folder |
+| `agent` | `job-private`, `job-web` or `job-all`: the agent of the working folder the job runs as |
 | `task` | The task, as text, at most 4000 characters |
 | `schedule` | `{"time": "HH:MM", "days": [...]}`, local time, `days` from `mon` to `sun` and every day when left out; or `{"every_hours": N}`, N from 4 to 24 |
 | `end` | The last day it runs, `YYYY-MM-DD`, at most 28 days after `created` |
@@ -287,7 +287,9 @@ starts the jobs that are due.
 | `created` | The day the file was first written, `YYYY-MM-DD` |
 
 The file is one JSON object, with no field written twice; no other field
-is accepted. A tick reads at most 32 job files, the ones the add-on saw
+is accepted, so a file in the old form, with `type` for the agent, is `invalid`
+(`shape`) and must be written again. The form is
+`/usr/share/ha-claude/schemas/job-chat.schema.json`. A tick reads at most 32 job files, the ones the add-on saw
 first; the others are skipped, and the log says so. At most 10 jobs are enabled at once; an 11th is
 `invalid`, the one the add-on saw last. The add-on reads a file only
 through a copy the Claude user makes, within a few seconds and up to
@@ -323,9 +325,9 @@ stops, the runs are stopped; at the next start a job that was running is
 Each job's state, which only root can read, is in
 `/data/state/jobs/<name>.json`: `status` (`idle`, `running`, `ok`, `failed`,
 `timeout` or `invalid`), `error` (for `invalid` the check that failed:
-`shape`, `name`, `type`, `task`, `schedule`, `end`, `limit` or
-`unreadable`; for `failed`, `agent` when the working folder has no agent for
-the type, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
+`shape`, `name`, `type` (the agent is not one of the three), `task`,
+`schedule`, `end`, `limit` or `unreadable`; for `failed`, `agent` when the
+working folder has no file for the agent, `lost` or `stopped`), `first_seen`, `last_run`, `last_end` and
 `next_run` (seconds since 1970), and from the last good result `finding`
 (the verdict), `text`, `notify` and `notify_rose` (`notify` went from false
 to true). What Claude printed is kept in `/data/state/job-<name>.log`, left
@@ -348,7 +350,7 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 
 | Entity | Shows |
 |---|---|
-| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type`, `schedule`, `end`, `task`, `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type` (the agent without `job-`: `private`, `web` or `all`), `schedule`, `end`, `task`, `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
 | `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
 | `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
 | `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |
@@ -375,30 +377,45 @@ A fixed job is a file `jobs/<name>.json` in the working folder, named after
 the agent it runs, for a run that belongs to the house and not to a chat.
 The add-on places each one in `/data/jobs/` as a job, so Home Assistant
 shows it with the same entities and switches it on and off like any job;
-`run_by` in its state says what starts it, and `type` is empty. A fixed job
+`run_by` in its state says what starts it, and `type` is empty. A file is a
+fixed job because the working folder holds it, whatever its fields. A fixed job
 is outside the limit of 10 enabled jobs and is never ended after 28 days.
 In this version Home Assistant's own automations start the fixed jobs; the
 tick starts none. The list of its tool calls is read from
 `/data/results/fixed/<name>.log.jsonl` and needs the policy flag
 `jobs.fixed_log` in the working folder.
 
-The file has exactly these fields; a file with others, or with a `type` or
-an `end`, is refused:
+The file has these fields; a file with others, or with a `type`, an `end`,
+a `created` or a `notify`, is refused (`shape`). The form is
+`/usr/share/ha-claude/schemas/job-repo.schema.json`.
 
 | Field | Value |
 |---|---|
-| `agent` | the file's name, and a file `.claude/agents/<name>.md` must exist |
-| `run_by` | `automation` |
-| `schedule` | `time` as `HH:MM`, and optionally `days` (`mon` to `sun`; all days when left out) |
-| `task` | the task, at most 4000 characters |
+| `agent` | the file's name, and a file (not a link) `.claude/agents/<name>.md` must exist |
+| `schedule` | `time` as `HH:MM` on a quarter hour, and optionally `days` (`mon` to `sun`; all days when left out); no `every_hours` |
 | `enabled` | `true` or `false` |
+| `task` | optional: the task, at most 4000 characters |
+| `description` | optional: text for the view, at most 500 characters |
+| `timeout`, `max_turns` | optional: the run's limits, at most 3600 seconds and 100 turns |
+| `context` | optional: any of `handover` and `jobs` |
+| `after` | optional: `clear_chat` |
+| `run_by` | optional: `automation` or `jobs` |
+
+The placed file is checked against the working folder's: every field but
+`enabled` must be the same (`differs` otherwise); while the working folder's
+file has `run_by` `jobs`, only `agent`, `description`, `timeout`,
+`max_turns`, `context`, `after` and `run_by` must, as `schedule`, `enabled`
+and `task` are then the chat's. The check's words are `shape`, `agent`,
+`task`, `schedule` and `differs`.
 
 The add-on places the files at start and after every `sync`. A placed file
 keeps its `enabled`, which is the switch's choice; every other field comes
 from the working folder, so an edit of the file in `/data/jobs/` is
 overwritten at the next placing. A file the working folder has refused is not
 placed. A fixed file removed from the working folder is deleted from
-`/data/jobs/` with its entities. A chat job with a fixed job's name is moved
+`/data/jobs/` with its entities; a file in its place that is not a valid
+fixed file is the chat's, and is moved to `ended/` instead. While a placed
+name's agent file is missing, its placed file keeps its `enabled`. A chat job with a fixed job's name is moved
 to `ended/` and the fixed job takes its place.
 
 `run <agent>` and the morning run of a fixed agent set that job's state: the

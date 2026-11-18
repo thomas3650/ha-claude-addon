@@ -492,7 +492,7 @@ teardown() {
   end="$(jq -rn --arg d "$today" '$d | strptime("%Y-%m-%d") | mktime + 86400 | strftime("%Y-%m-%d")')"
   job() {
     jq -n --arg t "$today" --arg e "$end" \
-      '{type: "web", task: "t", schedule: {every_hours: 4}, end: $e, enabled: true, created: $t}' > "$HC_JOBS/$1.json"
+      '{agent: "job-web", task: "t", schedule: {every_hours: 4}, end: $e, enabled: true, created: $t}' > "$HC_JOBS/$1.json"
   }
   job first
   started=$SECONDS

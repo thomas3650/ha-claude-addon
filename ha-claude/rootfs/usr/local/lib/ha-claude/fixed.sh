@@ -57,8 +57,13 @@ fixed_list() {
 }
 
 # _fixed_normal <name> <file> - prints the file in its normal form, or fails
-# and prints one word: shape, agent, run_by or schedule. It is the file's own
-# check, for the placed file and the working folder's alike.
+# and prints one word: shape, agent, task or schedule. It is the file's own
+# check (job-repo.schema.json), for the placed file and the working folder's
+# alike: agent, schedule (a time on a quarter hour, and days) and enabled;
+# optionally task, description, timeout and max_turns (within the add-on's
+# ceilings 3600 and 100), context, after and run_by. No end, created or
+# notify. In the normal form every field is there, null when the file has
+# none, and end is null.
 _fixed_normal() {
   local name="$1" file="$2" out members
   # jq keeps the last of a key written twice, so the members of the object
@@ -71,18 +76,29 @@ _fixed_normal() {
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   if out="$(jq -cen --arg name "$name" --argjson members "$members" '
     def all_days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    def whole($lo; $hi): type == "number" and (tojson | test("^[0-9]+$")) and . >= $lo and . <= $hi;
+    def named($set): type == "array" and (unique | length) == length and (. - $set) == [];
     [inputs] | if length != 1 then error("shape") else .[0] end
     | if type != "object" or (keys | length) != $members then error("shape") else . end
-    | if keys != ["agent", "enabled", "run_by", "schedule", "task"] then error("shape") else . end
-    | if (.agent | type) != "string" or (.run_by | type) != "string" or (.enabled | type) != "boolean"
-         or (.task | type) != "string" or (.task | length) == 0 or (.task | length) > 4000
-         or (.schedule | type) != "object"
+    | if (keys - ["after", "agent", "context", "description", "enabled", "max_turns", "run_by",
+                  "schedule", "task", "timeout"]) != [] then error("shape") else . end
+    | if (["agent", "enabled", "schedule"] - keys) != [] then error("shape") else . end
+    | if (.agent | type) != "string" or (.enabled | type) != "boolean" or (.schedule | type) != "object"
+      then error("shape") else . end
+    | if has("run_by") and (.run_by | IN("automation", "jobs") | not) then error("shape") else . end
+    | if has("timeout") and (.timeout | whole(1; 3600) | not) then error("shape") else . end
+    | if has("max_turns") and (.max_turns | whole(1; 100) | not) then error("shape") else . end
+    | if has("context") and (.context | named(["handover", "jobs"]) | not) then error("shape") else . end
+    | if has("after") and (.after | named(["clear_chat"]) | not) then error("shape") else . end
+    | if has("description") and ((.description | type) != "string" or (.description | length) == 0
+                                 or (.description | length) > 500)
       then error("shape") else . end
     | if .agent != $name then error("agent") else . end
-    | if .run_by != "automation" then error("run_by") else . end
+    | if has("task") and ((.task | type) != "string" or (.task | length) == 0 or (.task | length) > 4000)
+      then error("task") else . end
     | .schedule |= (
         if (keys - ["days"]) != ["time"] then error("schedule")
-        elif (.time | type) != "string" or (.time | test("^([01][0-9]|2[0-3]):[0-5][0-9]$") | not)
+        elif (.time | type) != "string" or (.time | test("^([01][0-9]|2[0-3]):(00|15|30|45)$") | not)
         then error("schedule")
         elif has("days") and ((.days | type) != "array" or (.days | length) == 0
               or (.days | unique | length) != (.days | length)
@@ -90,39 +106,49 @@ _fixed_normal() {
         then error("schedule")
         else {time, days: (if has("days") then [all_days[] as $d | select(.days | index($d)) | $d] else all_days end)}
         end)
-    | {agent, run_by, schedule, task, enabled, end: null}
+    | {agent, run_by: (.run_by // null), schedule, task: (.task // null), enabled,
+       description: (.description // null), timeout: (.timeout // null), max_turns: (.max_turns // null),
+       context: (.context // null), after: (.after // null), end: null}
   ' "$file" 2>&1)"; then
     printf '%s\n' "$out"
     return 0
   fi
   out="${out##*$'\n'}"
   case "${out##*: }" in
-    agent|run_by|schedule) echo "${out##*: }" ;;
+    agent|task|schedule) echo "${out##*: }" ;;
     *) echo shape ;;
   esac
   return 1
 }
 
 # fixed_check <name> <copy> - checks a copy of the placed file against the
-# working folder's: prints it in its normal form (agent, run_by, schedule
-# with time and days, task, enabled and end, which is always null), or fails
-# and prints one word: shape, agent, run_by, differs or schedule. Differs is
-# every field but enabled not being the working folder's.
+# working folder's: prints it in its normal form (_fixed_normal), or fails
+# and prints one word: shape, agent, task, schedule or differs. Differs is a
+# field not being the working folder's: while the working folder's file has
+# run_by jobs, its own fields (agent, description, timeout, max_turns,
+# context, after and run_by), as schedule, enabled and task are then the
+# chat's; otherwise every field but enabled.
 fixed_check() {
-  local name="$1" copy="$2" out repo
+  local name="$1" copy="$2" out repo keep
   if ! fixed_is "$name"; then
     echo shape
     return 1
   fi
   out="$(_fixed_normal "$name" "$copy")" || { echo "$out"; return 1; }
-  # The agent must exist as a file of its own: it is the run's instructions.
-  if [[ ! -f "$HC_WORKSPACE/.claude/agents/$name.md" ]]; then
+  # The agent must exist as a file of its own, not a link: it is the run's
+  # instructions.
+  if [[ ! -f "$HC_WORKSPACE/.claude/agents/$name.md" || -L "$HC_WORKSPACE/.claude/agents/$name.md" ]]; then
     echo agent
     return 1
   fi
   # The working folder's file is root's alone, so it is read as it is.
   repo="$(_fixed_normal "$name" "$HC_WORKSPACE/jobs/$name.json")" || { echo "$repo"; return 1; }
-  if [[ "$(jq -cS 'del(.enabled)' <<<"$out")" != "$(jq -cS 'del(.enabled)' <<<"$repo")" ]]; then
+  if [[ "$(jq -r '.run_by' <<<"$repo")" == jobs ]]; then
+    keep='{agent, description, timeout, max_turns, context, after, run_by}'
+  else
+    keep='del(.enabled)'
+  fi
+  if [[ "$(jq -cS "$keep" <<<"$out")" != "$(jq -cS "$keep" <<<"$repo")" ]]; then
     echo differs
     return 1
   fi
@@ -155,8 +181,10 @@ _fixed_place_one() {
     live=1
     if job_read "$name" "$copy"; then
       if word="$(fixed_check "$name" "$copy")"; then word=""; fi
-      if [[ -z "$word" || "$word" == differs ]]; then
-        # A fixed file: the switch's choice is kept.
+      if [[ -z "$word" || "$word" == differs ]] \
+         || { [[ "$word" == agent ]] && grep -qx -- "$name" "$known" && _fixed_normal "$name" "$copy" >/dev/null; }; then
+        # A fixed file: the switch's choice is kept, also while the agent's
+        # file is missing from the working folder for a while.
         enabled="$(jq -r '.enabled' "$copy")"
       elif ! grep -qx -- "$name" "$known"; then
         # Not one the add-on placed: the chat's own file under a fixed name.
@@ -219,13 +247,23 @@ _fixed_place() {
     fi
   done < <(fixed_list)
   # A name placed before whose file in the working folder has gone: its
-  # placed file is deleted, not moved to ended/, as it holds nothing of the
-  # chat's, and its state and entities go. When the file stays, nothing is
-  # forgotten and the name is kept, so the next placing tries again.
+  # placed file is deleted, as it holds nothing of the chat's, and its state
+  # and entities go. A file there that is not a valid fixed file is the
+  # chat's, written over it: that one is moved to ended/, as a chat's job
+  # that ends is. When the file stays, nothing is forgotten and the name is
+  # kept, so the next placing tries again.
   while IFS= read -r name; do
     job_name_ok "$name" || continue
     fixed_is "$name" && continue
-    as_claude rm -f -- "$HC_JOBS/$name.json" </dev/null >/dev/null 2>&1 || true
+    if [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]]; then
+      if job_read "$name" "$known.copy" && _fixed_normal "$name" "$known.copy" >/dev/null; then
+        as_claude rm -f -- "$HC_JOBS/$name.json" </dev/null >/dev/null 2>&1 || true
+      elif as_claude mkdir -p -- "$HC_JOBS/ended" </dev/null >/dev/null 2>&1 \
+           && as_claude mv -f -- "$HC_JOBS/$name.json" "$HC_JOBS/ended/$name.json" </dev/null >/dev/null 2>&1; then
+        log "fixed: $name is gone from the working folder, and the file in its place was the chat's; it is moved to ended/"
+      fi
+      rm -f -- "$known.copy"
+    fi
     if [[ -e "$HC_JOBS/$name.json" || -L "$HC_JOBS/$name.json" ]]; then
       log "fixed: $name is gone from the working folder, and its job could not be removed; the next placing tries again"
       printf '%s\n' "$name" >> "$kept"

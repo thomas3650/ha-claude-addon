@@ -18,7 +18,7 @@ days_after() {
 job_file() {
   mkdir -p "$HC_JOBS"
   jq -n --arg today "$TODAY" --arg end "$(days_after "$TODAY" 14)" \
-    '{type: "web", task: "Find the lowest price of a kettle.", schedule: {time: "07:10"},
+    '{agent: "job-web", task: "Find the lowest price of a kettle.", schedule: {time: "07:10"},
       end: $end, enabled: true, created: $today}' \
     | jq "${2:-.}" > "$HC_JOBS/$1.json"
 }
@@ -34,7 +34,8 @@ checks() {
   run job_check price "$HC_JOBS/price.json" "$TODAY" 0
   [ "$status" -eq 0 ]
   [ "$(jq -r '.name' <<<"$output")" = price ]
-  [ "$(jq -r '.type' <<<"$output")" = web ]
+  [ "$(jq -r '.agent' <<<"$output")" = job-web ]
+  [ "$(jq -c 'has("type")' <<<"$output")" = false ]
   [ "$(jq -c '.schedule' <<<"$output")" = '{"time":"07:10","days":["mon","tue","wed","thu","fri","sat","sun"]}' ]
   [ "$(jq -r '.enabled' <<<"$output")" = true ]
   [ "$(jq -r '.notify' <<<"$output")" = null ]
@@ -102,16 +103,17 @@ refused() {
   done
 }
 
-@test "an unknown type is refused" {
+@test "an agent other than the three is refused with the word type" {
   checks
-  for bad in '"agent"' '"Web"' '1' 'null'; do
-    job_file price ".type = $bad"
+  for bad in '"web"' '"job-Web"' '"house-check"' '"job-"' '1' 'null'; do
+    job_file price ".agent = $bad"
     refused type
   done
-  for good in private web all; do
-    job_file price ".type = \"$good\""
+  for good in job-private job-web job-all; do
+    job_file price ".agent = \"$good\""
     run job_check price "$HC_JOBS/price.json" "$TODAY" 0
     [ "$status" -eq 0 ]
+    [ "$(jq -r '.agent' <<<"$output")" = "$good" ]
   done
 }
 
@@ -126,9 +128,25 @@ refused() {
   [ "$status" -eq 0 ]
 }
 
-@test "an agent field is refused: the predefined jobs come later" {
+@test "the old form with type is refused as shape, and so is a field only a repo file may have" {
   checks
-  job_file price '.agent = "morning-briefing"'
+  job_file price '. + {type: "web"}'
+  refused shape
+  job_file price 'del(.agent) | . + {type: "web"}'
+  refused shape
+  for bad in '.context = ["jobs"]' '.after = ["clear_chat"]' '.description = "d"' \
+             '.timeout = 600' '.max_turns = 10' '.run_by = "jobs"'; do
+    job_file price "$bad"
+    refused shape
+  done
+}
+
+@test "a name that is a repo file's is refused as shape" {
+  checks
+  load_lib fixed
+  mkdir -p "$HC_WORKSPACE/jobs"
+  printf '{"agent":"price","schedule":{"time":"06:30"},"enabled":true}\n' > "$HC_WORKSPACE/jobs/price.json"
+  job_file price
   refused shape
 }
 
@@ -145,7 +163,7 @@ refused() {
   printf 'not json' > "$HC_JOBS/price.json"
   refused shape
   # Two objects, and a key written twice: jq alone would take the last.
-  printf '{"type":"web"}\n{"type":"web"}' > "$HC_JOBS/price.json"
+  printf '{"agent":"job-web"}\n{"agent":"job-web"}' > "$HC_JOBS/price.json"
   refused shape
   job_file price
   jq -r '"{\"enabled\":false," + (tojson | .[1:])' "$HC_JOBS/price.json" > "$BATS_TEST_TMPDIR/dup"

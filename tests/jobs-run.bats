@@ -65,14 +65,14 @@ days_after() {
 # hours and never run.
 job_file() {
   jq -n --arg today "$TODAY" --arg end "$(days_after "$TODAY" 14)" \
-    '{type: "web", task: "Find the lowest price of a kettle.", schedule: {every_hours: 4},
+    '{agent: "job-web", task: "Find the lowest price of a kettle.", schedule: {every_hours: 4},
       end: $end, enabled: true, created: $today}' \
     | jq "${2:-.}" > "$HC_JOBS/$1.json"
 }
 
 state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
 
-@test "a due job runs as its type's agent, marked as unattended and as the job, with the task on standard input" {
+@test "a due job runs as its agent, marked as unattended and as the job, with the task on standard input" {
   load_jobs write
   job_file price
   jobs_tick
@@ -136,10 +136,10 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   [ "$(stat -c %a "$HC_STATE/job-price.log" 2>/dev/null || stat -f %Lp "$HC_STATE/job-price.log")" = "600" ]
 }
 
-@test "the type picks the agent" {
+@test "the file's agent is the one that runs" {
   load_jobs write
-  job_file a '.type = "private"'
-  job_file b '.type = "all"'
+  job_file a '.agent = "job-private"'
+  job_file b '.agent = "job-all"'
   jobs_tick
   jobs_wait_idle
   [[ "$(cat "$STUB/a.argv")" == *$'--agent\njob-private'* ]]
@@ -147,7 +147,7 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   grep -qx "HA_CLAUDE_UNATTENDED=job-all" "$STUB/b.env"
 }
 
-@test "without the type's agent file the job fails and nothing runs" {
+@test "without the agent's file the job fails and nothing runs" {
   load_jobs write
   rm "$HC_WORKSPACE/.claude/agents/job-web.md"
   job_file price
@@ -310,7 +310,7 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
 
 @test "a job file seen more than 28 days ago is ended, also when it is invalid" {
   load_jobs write
-  job_file price '.type = "nope"'
+  job_file price '.agent = "nope"'
   jq -n --arg d "$(days_after "$TODAY" -29)" '{first_seen: $d, status: "invalid"}' > "$HC_JOB_STATE/price.json"
   jobs_tick
   [ -f "$HC_JOBS/ended/price.json" ]
@@ -594,4 +594,30 @@ fixed_job() {
   [ "$(state alpha-run .error)" = unreadable ]
   [ "$(state alpha-run .last_run)" = 5 ]
   [ "$(grep -cx alpha-run "$CHANGES")" -eq 1 ]
+}
+
+@test "a chat job in the old form, with type, is invalid as shape and the tick goes on with the others" {
+  load_jobs write
+  job_file old 'del(.agent) | . + {type: "web"}'
+  job_file price
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state old .status)" = invalid ]
+  [ "$(state old .error)" = shape ]
+  [ "$(state old .next_run)" = null ]
+  [ "$(state price .status)" = ok ]
+  [ "$(grep -c . "$STUB/starts")" -eq 1 ]
+}
+
+@test "a placed repo file whose task is 4001 characters is invalid with the word task, and does not run" {
+  load_jobs write
+  load_lib fixed
+  fixed_job alpha-run
+  jq -c --arg t "$(printf 'x%.0s' {1..4001})" '.task = $t' "$HC_WORKSPACE/jobs/alpha-run.json" > "$HC_JOBS/alpha-run.json"
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state alpha-run .status)" = invalid ]
+  [ "$(state alpha-run .error)" = task ]
+  [ "$(state alpha-run .next_run)" = null ]
+  [ ! -e "$STUB/starts" ]
 }

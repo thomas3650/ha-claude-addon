@@ -206,7 +206,9 @@ mqtt_publish_job() {
 # _mqtt_publish_job <name> - the same, under the lock, with files of this
 # call's own.
 _mqtt_publish_job() {
-  local name="$1" e comp key id topic="$HC_MQTT_PREFIX/$1/state" dir rc=0
+  local name="$1" e comp key id topic="$HC_MQTT_PREFIX/$1/state" dir rc=0 repo=false
+  # A file from the repo has no type: its origin is the working folder.
+  declare -F fixed_is >/dev/null && fixed_is "$name" && repo=true
   dir="$(mktemp -d "$HC_STATE/job-mqtt.XXXXXX")" || return 1
   local cfg="$dir/cfg" job="$dir/job" calls="$dir/calls" state="$dir/state" raw="$dir/raw"
   ( umask 077
@@ -245,7 +247,9 @@ _mqtt_publish_job() {
       ' > "$cfg" )
     _mqtt_send "homeassistant/$comp/ha_claude_job_${id}_$key/config" "$cfg" || rc=1
   done
-  ( umask 077; jq -cn --slurpfile j "$job" --slurpfile s "$state" --slurpfile c "$calls" "$HC_JQ_CLEAN"'
+  # The type is the chat's agent without its job- prefix, so the view stays
+  # as it was: web for job-web; none for a file from the repo or another agent.
+  ( umask 077; jq -cn --slurpfile j "$job" --slurpfile s "$state" --slurpfile c "$calls" --argjson repo "$repo" "$HC_JQ_CLEAN"'
       def time: if type == "number" then todate else null end;
       def text($nl): if type == "string" then clean($nl) else null end;
       $j[0] as $j | $s[0] as $s
@@ -255,7 +259,9 @@ _mqtt_publish_job() {
          finding: ($s.finding | text(false)), text: ($s.text | text(true)),
          notify: (if $s.notify == true then "ON" else "OFF" end),
          enabled: (if $j.enabled == true then "ON" else "OFF" end),
-         type: ($j.type | text(false)), schedule: (if ($j.schedule | type) == "object" then $j.schedule else null end),
+         type: (if $repo then null
+                elif $j.agent | IN("job-private", "job-web", "job-all") then $j.agent | ltrimstr("job-")
+                else null end), schedule: (if ($j.schedule | type) == "object" then $j.schedule else null end),
          end: ($j.end | text(false)), task: ($j.task | text(true)), calls: $c[0]}
     ' > "$cfg" )
   _mqtt_send "$topic" "$cfg" || rc=1
@@ -361,15 +367,17 @@ jobs_on_change() {
   return 0
 }
 
-# _mqtt_enabled_others <name> - prints how many other job files are
-# enabled, valid or not: the safe direction for the limit.
+# _mqtt_enabled_others <name> - prints how many other chat job files are
+# enabled, valid or not: the safe direction for the limit. A file from the
+# repo is outside the limit, by its origin.
 _mqtt_enabled_others() {
   local other n=0 copy
   copy="$(mktemp "$HC_STATE/job-count.XXXXXX")" || { echo "$HC_JOBS_MAX"; return 0; }
   while read -r other; do
     [[ "$other" != "$1" ]] || continue
+    fixed_is "$other" && continue
     job_read "$other" "$copy" || continue
-    [[ "$(jq -rs 'if length == 1 and (.[0] | type) == "object" and (.[0] | has("agent") | not)
+    [[ "$(jq -rs 'if length == 1 and (.[0] | type) == "object"
                   then .[0].enabled == true else false end' "$copy" 2>/dev/null)" == true ]] && n=$((n + 1))
   done < <(_jobs_order "$(date +%F)")
   rm -f -- "$copy"

@@ -1,8 +1,9 @@
 # Jobs: files the chat writes in the jobs folder, one per job, each a task
-# for one of three fixed agent types on a schedule. Home Assistant keeps the
-# clock and sends "jobs tick"; the add-on reads the files, checks them and
-# runs the jobs that are due. The add-on knows nothing about what a job does
-# or what a type may: the gate holds each type to its reach. The chat's gate
+# for one of three fixed agents (job-private, job-web, job-all) on a
+# schedule. Home Assistant keeps the clock and sends "jobs tick"; the add-on
+# reads the files, checks them and runs the jobs that are due. The add-on
+# knows nothing about what a job does or what an agent may: the gate holds
+# each to its reach. The chat's gate
 # checks a job file when it is written; this check is the second, so either
 # alone stops a bad job.
 #
@@ -53,9 +54,11 @@ job_list() {
   done
 }
 
-# job_check <name> <file> <since> <enabled-others> - prints the job in its
-# normal form, or fails and prints one word: shape, name, type, task,
-# schedule, end or limit. <since> is the day the add-on first saw the job,
+# job_check <name> <file> <since> <enabled-others> - checks a chat's job
+# file (job-chat.schema.json): prints the job in its normal form, or fails
+# and prints one word: shape, name, type (the agent is not one of the
+# three), task, schedule, end or limit. A file in the old form, with type,
+# is the shape, and so is a field only a file from the repo may have. <since> is the day the add-on first saw the job,
 # from its own state: the 28 days count from it as well as from the file's
 # own created, so a created moved later does not stretch them.
 # <enabled-others> is the number of other enabled jobs that come before this
@@ -67,6 +70,12 @@ job_check() {
   local name="$1" file="$2" since="$3" others="$4" out members
   if ! job_name_ok "$name"; then
     echo name
+    return 1
+  fi
+  # A file from the repo is its own check's (fixed_check): a chat's file is
+  # never one. Its origin is the working folder, not anything in the file.
+  if declare -F fixed_is >/dev/null && fixed_is "$name"; then
+    echo shape
     return 1
   fi
   # jq keeps the last of a key written twice, so the gate and this check
@@ -88,13 +97,12 @@ job_check() {
     def all_days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
     [inputs] | if length != 1 then error("shape") else .[0] end
     | if type != "object" or (keys | length) != $members then error("shape") else . end
-    | if has("agent") then error("shape") else . end
-    | if (keys - ["created", "enabled", "end", "notify", "schedule", "task", "type"]) != [] then error("shape") else . end
-    | if (["created", "enabled", "end", "schedule", "task", "type"] - keys) != [] then error("shape") else . end
+    | if (keys - ["agent", "created", "enabled", "end", "notify", "schedule", "task"]) != [] then error("shape") else . end
+    | if (["agent", "created", "enabled", "end", "schedule", "task"] - keys) != [] then error("shape") else . end
     | if (.enabled | type) != "boolean" then error("shape") else . end
     | if has("notify") and ((.notify | type) != "string" or (.notify | length) > 500) then error("shape") else . end
     | if (.created | day) == null then error("shape") else . end
-    | if (.type | IN("private", "web", "all")) | not then error("type") else . end
+    | if (.agent | IN("job-private", "job-web", "job-all")) | not then error("type") else . end
     | if (.task | type) != "string" or (.task | length) == 0 or (.task | length) > 4000 then error("task") else . end
     | .schedule |= (
         if type != "object" then error("schedule")
@@ -117,7 +125,7 @@ job_check() {
          or $end > ([$created, $since] | min) + $days * 86400
       then error("end") else . end
     | if .enabled and $others >= $max then error("limit") else . end
-    | {name: $name, type, task, schedule, end, enabled, notify: (.notify // null), created}
+    | {name: $name, agent, task, schedule, end, enabled, notify: (.notify // null), created}
   ' "$file" 2>&1)"; then
     printf '%s\n' "$out"
     return 0
@@ -475,11 +483,19 @@ _job_run() {
   rm -f -- "$marker" "$body"
 }
 
-# _job_start <name> <job-json> <now> - starts one run in the background.
-# Returns 1, with the job failed, when its type has no agent file.
+# _job_start <name> <job-json> <now> - starts one run in the background, as
+# the job's agent. Returns 1, with the job failed, when the agent has no
+# file.
 _job_start() {
   local name="$1" job="$2" now="$3" agent file
-  agent="job-$(jq -r '.type' <<<"$job")"
+  agent="$(jq -r '.agent' <<<"$job")"
+  if ! job_name_ok "$agent"; then
+    log "jobs: $name: the agent is not a name"
+    # shellcheck disable=SC2016  # jq's variables, not the shell's
+    _job_update "$name" '.status = "failed" | .error = "agent" | .last_run = $now | .notify_rose = false' \
+      --argjson now "$now"
+    return 1
+  fi
   file="$HC_WORKSPACE/.claude/agents/$agent.md"
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   if [[ ! -f "$file" || -L "$file" ]]; then

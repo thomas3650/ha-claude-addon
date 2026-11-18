@@ -212,7 +212,7 @@ EOT
 # A job with a result: its file, its state's last run, and its result's age.
 job_with_result() {
   mkdir -p "$HC_JOBS" "$HC_JOB_RESULTS" "$HC_JOB_STATE"
-  jq -n --argjson on "$2" '{type: "web", task: "SECRET TASK", schedule: {every_hours: 4},
+  jq -n --argjson on "$2" '{agent: "job-web", task: "SECRET TASK", schedule: {every_hours: 4},
                             end: "2099-01-01", enabled: $on, created: "2026-11-18"}' > "$HC_JOBS/$1.json"
   printf '{"verdict":"SECRET","text":"t","notify":false}' > "$HC_JOB_RESULTS/$1.json"
   touch -t "$3" "$HC_JOB_RESULTS/$1.json"
@@ -228,7 +228,7 @@ job_with_result() {
   job_with_result b-old true 202601010000 1893456000
   job_with_result c-off false 202601010000 1000
   mkdir -p "$HC_JOBS"
-  jq -n '{type: "web", task: "t", schedule: {every_hours: 4}, end: "2099-01-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/d-none.json"
+  jq -n '{agent: "job-web", task: "t", schedule: {every_hours: 4}, end: "2099-01-01", enabled: true, created: "2026-11-18"}' > "$HC_JOBS/d-none.json"
   run_morning got
   args="$(cat "$STUB/argv")"
   [[ "$args" == *$'\nJobs: a-new, b-old (old), c-off (old)'* ]]
