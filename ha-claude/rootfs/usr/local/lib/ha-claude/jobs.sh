@@ -1082,7 +1082,14 @@ jobs_tick() {
 # of the Claude user's. Any process of that user can write there, so a
 # request starts only what the chat's own jobs already may.
 : "${HC_JOB_REQUESTS_PASS:=5}"
-HC_JOB_REQUESTS_STUCK=0
+# At most this many requests are acted on in a pass: each costs a pass over
+# the job files (_jobs_scan). The rest stay for the next pass.
+: "${HC_JOB_REQUESTS_ACT:=2}"
+# The entries that could not be removed, kept so they do not take a pass's
+# places again; at most HC_JOB_REQUESTS_KEEP of them.
+HC_JOB_REQUESTS_KEEP=64
+HC_JOB_REQUESTS_STUCK=()
+HC_JOB_REQUESTS_LINK=0
 
 # jobs_request <name> - starts a chat's job now, as the tick would: valid and
 # counted within the limit as the tick counts it, enabled, not past its end,
@@ -1129,40 +1136,86 @@ jobs_request() {
   _job_start "$name" "$_JOBS_WANT_JOB" "$now" || true
 }
 
+# _jobs_request_stuck <entry> - true when the entry is one that could not
+# be removed before.
+_jobs_request_stuck() {
+  local stuck
+  for stuck in ${HC_JOB_REQUESTS_STUCK[@]+"${HC_JOB_REQUESTS_STUCK[@]}"}; do
+    [[ "$stuck" == "$1" ]] && return 0
+  done
+  return 1
+}
+
 # jobs_requests - the command loop's pass over the requests, on every pass:
-# at most HC_JOB_REQUESTS_PASS entries, the rest at the next. Every entry is
-# removed, as the Claude user, whose folder it is: never by root, so a link
-# or a folder put there is never followed. Only a plain file named by a job
-# name is a request, and only its name is read, never its content; it is
-# acted on once it is gone, so it cannot start a job twice. A pass over an
-# empty folder lists it and does nothing else.
+# at most HC_JOB_REQUESTS_PASS entries, the rest at the next, and at most
+# HC_JOB_REQUESTS_ACT requests acted on. Every entry is removed, as the
+# Claude user, whose folder it is: never by root, so a link or a folder put
+# there is never followed. A folder that user made unwritable is first made
+# its own again, as that user. Root only tests whether an entry is a link
+# before anything else about it, so it never looks at a link's target. Only
+# a plain file named by a job name is a request, and only its name is read,
+# never its content; it is acted on once it is gone, so it cannot start a
+# job twice. An entry that could not be removed is kept aside and takes no
+# place in later passes. A pass over an empty folder lists it and does
+# nothing else.
 jobs_requests() {
-  local dir="$HC_JOB_REQUESTS" entry name left=0
-  local -a entries=() names=()
-  [[ -d "$dir" && ! -L "$dir" ]] || return 0
+  local dir="$HC_JOB_REQUESTS" entry name left=0 seen=0 wanted=0
+  local -a entries=() folders=() names=()
+  if [[ -L "$dir" ]]; then
+    (( HC_JOB_REQUESTS_LINK )) || log "jobs: the requests folder is a link; it is not read"
+    HC_JOB_REQUESTS_LINK=1
+    return 0
+  fi
+  HC_JOB_REQUESTS_LINK=0
+  [[ ! -L "$dir" && -d "$dir" ]] || return 0
+  # An entry kept aside that is gone now is forgotten, so a request of the
+  # same name later is read.
+  local -a stuck=()
+  for entry in ${HC_JOB_REQUESTS_STUCK[@]+"${HC_JOB_REQUESTS_STUCK[@]}"}; do
+    [[ -L "$entry" || -e "$entry" ]] && stuck+=("$entry")
+  done
+  HC_JOB_REQUESTS_STUCK=(${stuck[@]+"${stuck[@]}"})
   while IFS= read -r -d '' entry; do
+    # A bound on the listing too, however many entries are skipped.
+    seen=$((seen + 1))
+    (( seen <= HC_JOB_REQUESTS_PASS * 4 )) || break
+    _jobs_request_stuck "$entry" && continue
+    name="${entry##*/}"
+    if [[ ! -L "$entry" && -f "$entry" ]] && job_name_ok "$name"; then
+      # A request beyond those acted on this pass stays for the next.
+      (( wanted < HC_JOB_REQUESTS_ACT )) || continue
+      wanted=$((wanted + 1))
+      names+=("$name")
+    elif [[ ! -L "$entry" && -d "$entry" ]]; then
+      folders+=("$entry")
+    fi
     entries+=("$entry")
     (( ${#entries[@]} < HC_JOB_REQUESTS_PASS )) || break
   done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
   (( ${#entries[@]} )) || return 0
+  # One time limit for both steps, as the Claude user: the folders made that
+  # user's own again, then everything removed.
+  # shellcheck disable=SC2016  # the inner shell's variables
+  as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" 10 sh -c '
+    n="$1"; shift
+    i=0
+    for f in "$@"; do
+      i=$((i + 1))
+      [ "$i" -le "$n" ] && chmod -R u+rwx -- "$f" 2>/dev/null
+    done
+    shift "$n"
+    rm -rf -- "$@"
+  ' sh "${#folders[@]}" ${folders[@]+"${folders[@]}"} "${entries[@]}" </dev/null >/dev/null 2>&1 || true
   for entry in "${entries[@]}"; do
-    name="${entry##*/}"
-    job_name_ok "$name" && [[ -f "$entry" && ! -L "$entry" ]] && names+=("$name")
+    if [[ -L "$entry" || -e "$entry" ]]; then
+      left=$((left + 1))
+      (( ${#HC_JOB_REQUESTS_STUCK[@]} < HC_JOB_REQUESTS_KEEP )) && HC_JOB_REQUESTS_STUCK+=("$entry")
+    fi
   done
-  as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" 10 rm -rf -- "${entries[@]}" </dev/null >/dev/null 2>&1 || true
-  for entry in "${entries[@]}"; do
-    [[ -e "$entry" || -L "$entry" ]] && left=$((left + 1))
-  done
-  if (( left )); then
-    # Logged once until a pass removes all it found, not every five seconds.
-    (( HC_JOB_REQUESTS_STUCK )) || log "jobs: $left request(s) could not be removed; none of them is acted on"
-    HC_JOB_REQUESTS_STUCK=1
-  else
-    HC_JOB_REQUESTS_STUCK=0
-  fi
+  (( left )) && log "jobs: $left entries in the requests folder could not be removed; none is acted on"
   for name in ${names[@]+"${names[@]}"}; do
     # One that is still there is not acted on: it would start again.
-    [[ -e "$dir/$name" || -L "$dir/$name" ]] && continue
+    [[ -L "$dir/$name" || -e "$dir/$name" ]] && continue
     jobs_request "$name"
   done
   return 0

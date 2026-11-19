@@ -100,7 +100,7 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   empty
   (( $(state price .last_run) >= before ))
   [ "$(state price .status)" = ok ]
-  grep -q "rm -rf -- $REQ/price" "$AS"
+  grep -q "rm -rf" "$AS" && grep -q -- " $REQ/price\$" "$AS"
   grep -q "price runs now, as the chat asked" "$HC_LOG"
   # The next pass has nothing to do.
   jobs_requests
@@ -271,7 +271,7 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   empty
   [ -z "$(starts)" ]
   [ "$(cat "$BATS_TEST_TMPDIR/target")" = keep ]
-  grep -q "rm -rf -- $REQ/price" "$AS"
+  grep -q "rm -rf" "$AS" && grep -q -- " $REQ/price\$" "$AS"
 }
 
 @test "as root, a request that is a link to a root-owned file is removed as the Claude user, the target untouched" {
@@ -298,7 +298,7 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   grep -q "could not be removed" "$HC_LOG"
 }
 
-@test "a folder of requests that is a link is not read" {
+@test "a folder of requests that is a link is not read, and is logged once" {
   load_requests
   job_file price
   rmdir "$REQ"
@@ -306,9 +306,11 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   : > "$BATS_TEST_TMPDIR/elsewhere/price"
   ln -s "$BATS_TEST_TMPDIR/elsewhere" "$REQ"
   jobs_requests
+  jobs_requests
   [ -z "$(starts)" ]
   [ -e "$BATS_TEST_TMPDIR/elsewhere/price" ]
   [ ! -s "$AS" ]
+  [ "$(grep -c "the requests folder is a link" "$HC_LOG")" -eq 1 ]
 }
 
 @test "a request that cannot be removed is not acted on, and is logged once" {
@@ -340,4 +342,64 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   after="$(grep -n "^  jobs_after_run$" "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run" | cut -d: -f1)"
   req="$(grep -n "^  jobs_requests$" "$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/addon-run" | cut -d: -f1)"
   [ -n "$after" ] && [ -n "$req" ] && (( req > after ))
+}
+
+@test "root tests whether an entry is a link before any test that would look at its target" {
+  load_requests
+  body="$(declare -f jobs_requests)"
+  # Every -f, -d or -e on an entry or the folder comes after a -L on it in
+  # the same test.
+  while IFS= read -r line; do
+    [[ "$line" == *'-L "'* ]] || { echo "no -L first: $line"; return 1; }
+    pre="${line%%-[fde] \"*}"
+    [[ "$pre" == *'-L "'* ]] || { echo "-L comes after: $line"; return 1; }
+  done < <(grep -E -- '-[fde] "' <<<"$body")
+}
+
+@test "folders the Claude user made unremovable are made its own again and removed; requests go on" {
+  load_requests write
+  job_file price
+  for n in a1 a2 a3 a4 a5; do
+    mkdir "$REQ/$n"; : > "$REQ/$n/x"; chmod 000 "$REQ/$n"
+  done
+  request price
+  jobs_requests
+  jobs_requests
+  jobs_wait_idle
+  empty
+  [ "$(starts)" = price ]
+  grep -q "chmod -R u+rwx" "$AS"
+}
+
+@test "entries that could not be removed take no place in later passes, and are logged once" {
+  load_requests write
+  job_file price
+  for n in h1 h2 h3 h4 h5; do mkdir "$REQ/$n"; done
+  # The Claude user removes all but the h folders.
+  as_claude() {
+    printf '%s\n' "$*" >> "$AS"
+    local a; local -a keep=()
+    for a in "$@"; do [[ "$a" == "$REQ"/h* ]] || keep+=("$a"); done
+    _real_as_claude "${keep[@]}"
+  }
+  jobs_requests
+  request price
+  jobs_requests
+  jobs_requests
+  jobs_wait_idle
+  [ "$(starts)" = price ]
+  [ -d "$REQ/h1" ] && [ -d "$REQ/h5" ]
+  [ "$(grep -c "could not be removed" "$HC_LOG")" -eq 1 ]
+}
+
+@test "at most two requests are acted on in a pass; the rest stay for the next" {
+  load_requests hang
+  set_options '{"jobs_parallel":10}'
+  for n in a b c d; do job_file "$n"; request "$n"; done
+  jobs_requests
+  [ "$(jobs_running | wc -l | tr -d ' ')" -eq 2 ]
+  [ "$(ls -A "$REQ" | wc -l | tr -d ' ')" -eq 2 ]
+  jobs_requests
+  [ "$(jobs_running | wc -l | tr -d ' ')" -eq 4 ]
+  empty
 }
