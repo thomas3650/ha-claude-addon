@@ -66,9 +66,9 @@ handle_command() {
       ;;
     sync)
       # No job runs under a gate or a policy replaced halfway: the running
-      # jobs end first, and none starts meanwhile, as only a tick or a
-      # command starts one and no command is handled until the sync has
-      # ended.
+      # jobs end first, and none starts meanwhile, as only a tick, a
+      # command or a request of the chat's (jobs_requests) starts one, and
+      # the loop handles none of them until the sync has ended.
       declare -F jobs_wait_idle >/dev/null && jobs_wait_idle
       sync_workspace
       ensure_layout

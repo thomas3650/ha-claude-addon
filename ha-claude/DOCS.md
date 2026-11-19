@@ -370,6 +370,17 @@ Every call is refused when `HA_CLAUDE_UNATTENDED` or `HA_CLAUDE_JOB` is set,
 so a job's run cannot use it. No tool deletes a job: a job ends by
 `enabled` false or its `end`.
 
+The command loop reads `/data/jobs/.requests/` (the Claude user's, made at
+start) every five seconds, at most five entries a pass. It removes every
+entry as the Claude user, never as root, and reads only names, never what a
+file holds; a link or a folder is removed and never followed. A plain file
+named by a chat's job starts that job as a tick would: valid and within the
+10 enabled jobs as the tick counts them, enabled, not past its `end`, not
+running already, only while Home Assistant can see the jobs, and within
+`jobs_parallel`; the run sets `last_run` and ends with its result and
+entities, as a tick's does. Anything else (a file from the working folder,
+a name with no valid file) is dropped, and the log says why.
+
 ### The jobs in Home Assistant
 
 The add-on asks the Supervisor for the MQTT broker (the service

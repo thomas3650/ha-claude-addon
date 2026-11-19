@@ -84,6 +84,8 @@ while true; do
   # On every pass, so after each command too: a run that asked for the chat
   # to be cleared has it cleared within five seconds of its end.
   jobs_after_run
+  # The chat's requests to run a job now (job_run_now), on every pass too.
+  jobs_requests
   ticks=$((ticks + 1))
   if (( ticks % 6 == 0 )); then chat_alive || start_chat; fi
   # Retention ran at start; here once on each new day.
