@@ -385,7 +385,7 @@ _job_update() {
 # wrote. Written whole and renamed in place; removed when the job has no
 # state.
 _job_public() {
-  local name="$1" dir="${HC_JOB_PUBLIC:?}" file
+  local name="$1" dir="${HC_JOB_PUBLIC:?}" file tmp
   job_name_ok "$name" || return 0
   file="$dir/$name.json"
   if [[ ! -f "$HC_JOB_STATE/$name.json" ]]; then
@@ -394,6 +394,9 @@ _job_public() {
   fi
   # Readable by the Claude user, whatever the add-on's own umask.
   ( umask 022; mkdir -p "$dir" ) 2>/dev/null || return 0
+  # A temporary file of its own: the runner and the command loop may write
+  # the same job's copy at once.
+  tmp="$(mktemp "$dir/.$name.XXXXXX.tmp" 2>/dev/null)" || return 0
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   if ( umask 022; jq -c '
         def num: if type == "number" then . else null end;
@@ -403,10 +406,10 @@ _job_public() {
          request: (if (.request | type) == "object"
                    then {at: (.request.at | num), outcome: (.request.outcome | word), reason: (.request.reason | word)}
                    else null end)}
-      ' "$HC_JOB_STATE/$name.json" > "$file.tmp" ) 2>/dev/null; then
-    mv -f -- "$file.tmp" "$file"
+      ' "$HC_JOB_STATE/$name.json" > "$tmp" ) 2>/dev/null; then
+    chmod 644 -- "$tmp" && mv -f -- "$tmp" "$file"
   else
-    rm -f -- "$file.tmp"
+    rm -f -- "$tmp"
   fi
 }
 
@@ -474,7 +477,7 @@ jobs_startup() {
   # Every job's public copy afresh, as one whose state did not change since
   # an upgrade has none yet; a copy with no state left is removed.
   ( umask 022; mkdir -p "${HC_JOB_PUBLIC:?}" ) 2>/dev/null || true
-  rm -f -- "$HC_JOB_PUBLIC"/*.tmp
+  rm -f -- "$HC_JOB_PUBLIC"/*.tmp "$HC_JOB_PUBLIC"/.*.tmp
   for file in "$dir"/*.json; do
     [[ -f "$file" ]] || continue
     name="${file##*/}"; name="${name%.json}"

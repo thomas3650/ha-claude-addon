@@ -1,7 +1,7 @@
 load helpers
 
-# ha-claude-docs-mcp: the text of a document the owner uploaded in the chat
-# (#531). Driven as the chat's Claude Code drives it. The documents are made
+# ha-claude-docs-mcp: the text of a document the owner uploaded in the chat.
+# Driven as the chat's Claude Code drives it. The documents are made
 # here with Python's zipfile; their text is made up.
 
 SERVER="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-docs-mcp"
@@ -78,16 +78,55 @@ W='xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
   [ "$output" = $'Title\nOne two\tthree\nFour' ]
 }
 
-@test "a .pdf goes through pdftotext, with the file after --" {
+@test "a .pdf goes through pdftotext from the open file on its standard input, not by its path" {
   stub="$BATS_TEST_TMPDIR/pdftotext"
-  printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"\necho "Side 1 tekst"\n' "$BATS_TEST_TMPDIR" > "$stub"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"\nhead -c 8 > "%s/input"\necho "Side 1 tekst"\n' \
+    "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" > "$stub"
   chmod +x "$stub"
   printf '%%PDF-1.4\n' > "$UP/a.pdf"
   HC_PDFTOTEXT="$stub" run read_doc "$UP/a.pdf"
   [ "$status" -eq 0 ]
   [ "$output" = "Side 1 tekst" ]
-  [ "$(tail -n 2 "$BATS_TEST_TMPDIR/args" | head -n 1)" = "$UP/a.pdf" ]
+  [ "$(tail -n 2 "$BATS_TEST_TMPDIR/args" | head -n 1)" = /dev/stdin ]
   grep -qx -- -- "$BATS_TEST_TMPDIR/args"
+  ! grep -qF "$UP" "$BATS_TEST_TMPDIR/args"
+  [ "$(cat "$BATS_TEST_TMPDIR/input")" = "%PDF-1.4" ]
+}
+
+@test "a real PDF's text comes through the image's pdftotext" {
+  command -v pdftotext >/dev/null || skip "no pdftotext here"
+  python3 - "$UP/real.pdf" <<'PY'
+import sys
+objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        None, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+stream = b"BT /F1 12 Tf 10 50 Td (Hej fra PDF) Tj ET"
+objs[3] = "<< /Length %d >>\nstream\n%s\nendstream" % (len(stream), stream.decode())
+out = b"%PDF-1.4\n"; offs = []
+for i, o in enumerate(objs):
+    offs.append(len(out)); out += ("%d 0 obj\n%s\nendobj\n" % (i + 1, o)).encode()
+x = len(out); out += ("xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)).encode()
+for o in offs: out += ("%010d 00000 n \n" % o).encode()
+out += ("trailer << /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, x)).encode()
+open(sys.argv[1], "wb").write(out)
+PY
+  run read_doc "$UP/real.pdf"
+  [ "$status" -eq 0 ]
+  [ "$output" = "Hej fra PDF" ]
+}
+
+@test "an office file whose parsing takes too long is refused as slow, and the server goes on" {
+  python3 - "$UP/slow.docx" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("word/document.xml", "<a" * (4 * 1024 * 1024))
+PY
+  zipped "$UP/ok.docx" "word/document.xml=<w:p><w:t>fine</w:t></w:p>"
+  out="$(HC_PARSE_SECONDS=0.2 rpc "$INIT" \
+    "$(jq -cn --arg p "$UP/slow.docx" '{jsonrpc: "2.0", id: 2, method: "tools/call", params: {name: "read_document", arguments: {path: $p}}}')" \
+    "$(jq -cn --arg p "$UP/ok.docx" '{jsonrpc: "2.0", id: 3, method: "tools/call", params: {name: "read_document", arguments: {path: $p}}}')")"
+  [ "$(jq -r 'select(.id == 2) | .result.content[0].text' <<<"$out")" = "slow: path" ]
+  [ "$(jq -r 'select(.id == 3) | .result.content[0].text' <<<"$out")" = fine ]
 }
 
 @test "outside the uploads folder, through a link, a relative path or another kind: refused" {

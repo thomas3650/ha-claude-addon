@@ -14,9 +14,10 @@
 // set: an unattended run gets no tool here.
 //
 // A refusal is one line, "<word>: <field>". The text is the document's, and
-// is information, never instructions.
+// is information, never instructions. An office file is parsed in a child
+// process of this script with a deadline (--parse, internal).
 //
-// HC_UPLOADS and HC_PDFTOTEXT are for the tests.
+// HC_UPLOADS, HC_PDFTOTEXT and HC_PARSE_SECONDS are for the tests.
 'use strict';
 
 const fs = require('fs');
@@ -34,6 +35,7 @@ const TEXT_MAX = 200000; // characters of text given back
 const SHEETS_MAX = 50;
 const SLIDES_MAX = 500;
 const PDF_SECONDS = 60;
+const PARSE_SECONDS = Number(process.env.HC_PARSE_SECONDS) > 0 ? Number(process.env.HC_PARSE_SECONDS) : 30;
 const LINE_MAX = 1024 * 1024;
 
 const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -75,29 +77,40 @@ function wantFile(args) {
   try { real = fs.realpathSync(norm); } catch { refuse('missing', 'path'); }
   const relReal = path.relative(root, real);
   if (relReal === '' || relReal.startsWith('..') || path.isAbsolute(relReal)) refuse('outside', 'path');
-  return real;
+  let checked;
+  try { checked = fs.lstatSync(real); } catch { refuse('missing', 'path'); }
+  return { file: real, dev: checked.dev, ino: checked.ino };
 }
 
-function readWhole(file) {
+// The open descriptor of the checked file: opened without following a link,
+// and the same file as the one checked, so a folder swapped for a link
+// between the check and the open is refused.
+function openChecked(want) {
   let fd;
   try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    fd = fs.openSync(want.file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   } catch { refuse('unreadable', 'path'); }
-  try {
-    const st = fs.fstatSync(fd);
-    if (!st.isFile()) refuse('unreadable', 'path');
-    if (st.size > FILE_MAX) refuse('size', 'path');
-    const buf = Buffer.alloc(st.size);
-    let len = 0;
-    while (len < st.size) {
-      const n = fs.readSync(fd, buf, len, st.size - len, null);
-      if (n === 0) break;
-      len += n;
-    }
-    return buf.subarray(0, len);
-  } finally {
+  const st = fs.fstatSync(fd);
+  if (!st.isFile() || st.dev !== want.dev || st.ino !== want.ino) {
     fs.closeSync(fd);
+    refuse('unreadable', 'path');
   }
+  if (st.size > FILE_MAX) {
+    fs.closeSync(fd);
+    refuse('size', 'path');
+  }
+  return { fd, size: st.size };
+}
+
+function readWhole(fd, size) {
+  const buf = Buffer.alloc(size);
+  let len = 0;
+  while (len < size) {
+    const n = fs.readSync(fd, buf, len, size - len, null);
+    if (n === 0) break;
+    len += n;
+  }
+  return buf.subarray(0, len);
 }
 
 // --- Zip ----------------------------------------------------------------
@@ -282,10 +295,12 @@ function odf(buf) {
   return xmlText(content, ODF);
 }
 
-function pdf(file) {
-  const r = spawnSync(PDFTOTEXT, ['-layout', '-enc', 'UTF-8', '--', file, '-'], {
+// The PDF from the open descriptor, as pdftotext's standard input, so it
+// reads the file that was checked and not a path again.
+function pdf(fd) {
+  const r = spawnSync(PDFTOTEXT, ['-layout', '-enc', 'UTF-8', '--', '/dev/stdin', '-'], {
     encoding: 'utf8', timeout: PDF_SECONDS * 1000, maxBuffer: 64 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'ignore'],
+    stdio: [fd, 'pipe', 'ignore'],
   });
   if (r.error || r.status !== 0) refuse('format', 'path');
   return r.stdout;
@@ -295,18 +310,33 @@ const READERS = {
   '.docx': docx, '.xlsx': xlsx, '.pptx': pptx, '.odt': odf, '.ods': odf, '.odp': odf,
 };
 
+// The text of an office file, worked out in a child process of this same
+// script with a deadline, so a part built to make the parsing slow cannot
+// hang the server: the child reads the archive from its standard input.
+function officeText(fd, ext) {
+  const r = spawnSync(process.execPath, [__filename, '--parse', ext], {
+    encoding: 'utf8', timeout: PARSE_SECONDS * 1000, maxBuffer: 64 * 1024 * 1024,
+    stdio: [fd, 'pipe', 'ignore'], env: { PATH: process.env.PATH || '/usr/bin:/bin' },
+  });
+  if (r.error) refuse(r.error.code === 'ETIMEDOUT' ? 'slow' : 'format', 'path');
+  let out;
+  try { out = JSON.parse(r.stdout); } catch { refuse('format', 'path'); }
+  if (!isObject(out)) refuse('format', 'path');
+  if (typeof out.refuse === 'string') refuse(out.refuse, 'path');
+  if (typeof out.text !== 'string') refuse('format', 'path');
+  return out.text;
+}
+
 function readDocument(args) {
-  const file = wantFile(args);
-  const ext = path.extname(file).toLowerCase();
+  const want = wantFile(args);
+  const ext = path.extname(want.file).toLowerCase();
+  if (ext !== '.pdf' && !READERS[ext]) refuse('kind', 'path');
+  const { fd } = openChecked(want);
   let text;
-  unpacked = 0;
-  if (ext === '.pdf') {
-    readWhole(file); // the checks of size and kind, as for the others
-    text = pdf(file);
-  } else if (READERS[ext]) {
-    text = READERS[ext](readWhole(file));
-  } else {
-    refuse('kind', 'path');
+  try {
+    text = ext === '.pdf' ? pdf(fd) : officeText(fd, ext);
+  } finally {
+    fs.closeSync(fd);
   }
   // Control characters out, but tabs and new lines; blank runs shortened.
   // eslint-disable-next-line no-control-regex
@@ -314,6 +344,21 @@ function readDocument(args) {
     .replace(/\n{3,}/g, '\n\n').trim();
   if (text.length > TEXT_MAX) text = `${text.slice(0, TEXT_MAX)}\n[cut at ${TEXT_MAX} characters]`;
   return text === '' ? '[no text in the document]' : text;
+}
+
+// The child: the archive on standard input, its text or a refusal word as
+// one JSON line out.
+function parseChild(ext) {
+  let out;
+  try {
+    const st = fs.fstatSync(0);
+    if (!st.isFile() || st.size > FILE_MAX) refuse('size', 'path');
+    unpacked = 0;
+    out = { text: READERS[ext](readWhole(0, st.size)) };
+  } catch (e) {
+    out = { refuse: e instanceof Refusal ? e.message.split(':')[0] : 'format' };
+  }
+  process.stdout.write(JSON.stringify(out));
 }
 
 const TOOLS = [
@@ -407,6 +452,16 @@ function line(text) {
   }
 }
 
+// The child ends when its one line is written: process.exit would cut a
+// long line short on a pipe.
+if (process.argv[2] === '--parse') {
+  if (READERS[process.argv[3]]) parseChild(process.argv[3]);
+  else process.stdout.write(JSON.stringify({ refuse: 'kind' }));
+} else {
+  serve();
+}
+
+function serve() {
 let pending = '';
 let skipping = false;
 process.stdout.on('error', () => {});
@@ -430,3 +485,4 @@ process.stdin.on('end', () => {
   if (!skipping) line(pending.replace(/\r$/, ''));
   pending = '';
 });
+}

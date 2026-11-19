@@ -404,7 +404,7 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   empty
 }
 
-# The request's outcome (#552) and the public copy job_status reads.
+# The request's outcome and the public copy job_status reads.
 pub() { jq -r "$2" "$HC_JOB_PUBLIC/$1.json"; }
 
 @test "a started request is kept in the state as started, and in the public copy" {

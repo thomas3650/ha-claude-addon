@@ -407,8 +407,10 @@ where an upload lands. It reads `.docx` (the body, footnotes and endnotes),
 `.odt`, `.ods`, `.odp` with Node's own modules, and `.pdf` through
 `pdftotext`. It follows no link, writes nothing, reads a file of at most
 32 MB and at most 64 MB unpacked, and gives back at most 200000
-characters. A refusal is one line, `<word>: <field>`: `path`, `outside`,
-`link`, `missing`, `unreadable`, `kind`, `format`, `size` or `shape`.
+characters. An office file is parsed in a child process with 30 seconds;
+a PDF has 60. A refusal is one line, `<word>: <field>`: `path`, `outside`,
+`link`, `missing`, `unreadable`, `kind`, `format`, `size`, `slow` or
+`shape`.
 Every call is refused when `HA_CLAUDE_UNATTENDED` or `HA_CLAUDE_JOB` is
 set.
 
