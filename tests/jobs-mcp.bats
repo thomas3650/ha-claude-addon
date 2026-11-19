@@ -416,7 +416,7 @@ public() { mkdir -p "$HC_JOB_PUBLIC"; printf '%s' "$2" > "$HC_JOB_PUBLIC/$1.json
 
 @test "job_status gives the copy's status, times in local time with the offset, and the request" {
   export HC_JOB_PUBLIC="$BATS_TEST_TMPDIR/status/jobs" TZ=Europe/Copenhagen
-  public kettle-price '{"status":"ok","error":null,"last_run":1763546400,"last_end":1763546700,"next_run":null,
+  public kettle-price '{"status":"ok","error":null,"last_run":1763546400,"last_end":1763546700,"next_run":null,"limits":{"seconds":1800,"turns":60},
     "request":{"at":1763546400,"outcome":"started","reason":null}}'
   run call job_status '{"name":"kettle-price"}'
   [ "$status" -eq 0 ]
@@ -426,6 +426,7 @@ public() { mkdir -p "$HC_JOB_PUBLIC"; printf '%s' "$2" > "$HC_JOB_PUBLIC/$1.json
   [ "$(jq -r .last_run <<<"$output")" = 2025-11-19T11:00:00+01:00 ]
   [ "$(jq -r .last_end <<<"$output")" = 2025-11-19T11:05:00+01:00 ]
   [ "$(jq -r .next_run <<<"$output")" = null ]
+  [ "$(jq -c .limits <<<"$output")" = '{"seconds":1800,"turns":60}' ]
   [ "$(jq -c .request <<<"$output")" = '{"at":"2025-11-19T11:00:00+01:00","outcome":"started","reason":null}' ]
 }
 
@@ -449,7 +450,7 @@ public() { mkdir -p "$HC_JOB_PUBLIC"; printf '%s' "$2" > "$HC_JOB_PUBLIC/$1.json
   [ "$(jq -c .request.outcome <<<"$output")" = '"dropped"' ]
   [ "$(jq -r .request.reason <<<"$output")" = parallel ]
   [ "$(jq -r .error <<<"$output")" = null ]
-  [ "$(jq -c 'keys' <<<"$output")" = '["error","last_end","last_run","name","next_run","queued","request","status"]' ]
+  [ "$(jq -c 'keys' <<<"$output")" = '["error","last_end","last_run","limits","name","next_run","queued","request","status"]' ]
   public kettle-price '{"status":"hacked","request":{"outcome":"won","reason":"A B"}}'
   run call job_status '{"name":"kettle-price"}'
   [ "$(jq -r .status <<<"$output")" = unknown ]

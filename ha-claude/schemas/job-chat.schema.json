@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "job-chat.schema.json",
   "title": "A job file written by the chat",
-  "description": "A job the chat creates: <name>.json in the jobs folder outside the working folder's jobs/. Fields as in job-fields.schema.json. The chat's agent is one of job-private, job-web and job-all; the file has no description, timeout, max_turns, context, after or run_by. What a schema cannot say is listed in job-fields.schema.json: `end` at most 28 days after `created`, at most 10 enabled jobs, a key written twice.",
+  "description": "A job the chat creates: <name>.json in the jobs folder outside the working folder's jobs/. Fields as in job-fields.schema.json. The chat's agent is one of job-private, job-web and job-all; the file has no description, timeout, max_turns, context, after or run_by. What a schema cannot say is listed in job-fields.schema.json: `end` at most 28 days after `created`, at most 10 enabled jobs, a key written twice. Each run has the add-on's limits, the options job_timeout (1800 seconds by default) and job_max_turns (60 by default), which job_status shows as limits after a run.",
   "type": "object",
   "additionalProperties": false,
   "required": ["agent", "task", "schedule", "enabled", "end", "created"],

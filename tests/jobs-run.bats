@@ -33,6 +33,7 @@ case "$mode" in
   string) printf '{"verdict":"v","text":"t","notify":"true"}' > "$file" ;;
   long) printf '{"verdict":"v","text":"%s","notify":false}' "$(printf 'x%.0s' {1..4001})" > "$file" ;;
   error) printf '{"verdict":"v","text":"t","notify":true}' > "$file"; exit 1 ;;
+  turns) printf '{"verdict":"v","text":"t","notify":true}' > "$file"; echo "Error: Reached max turns (60)"; exit 1 ;;
   nothing) ;;
   slow) sleep 3; printf '{"verdict":"v","text":"t","notify":false}' > "$file" ;;
   hang) exec sleep 30 ;;
@@ -620,4 +621,46 @@ fixed_job() {
   [ "$(state alpha-run .error)" = task ]
   [ "$(state alpha-run .next_run)" = null ]
   [ ! -e "$STUB/starts" ]
+}
+
+# Why a run did not end ok (#557 in the house's list): one word in error.
+@test "each way a run fails or times out leaves its word in error, and the public copy has it" {
+  for pair in extra:result-shape string:result-type long:result-length nothing:no-result error:exit turns:max-turns; do
+    mode="${pair%%:*}"; want="${pair#*:}"
+    load_jobs "$mode"
+    rm -f "$HC_JOB_STATE/price.json" "$HC_JOB_RESULTS/price.json"
+    job_file price
+    jobs_tick
+    jobs_wait_idle
+    [ "$(state price .status)" = failed ] || { echo "$mode"; false; }
+    [ "$(state price .error)" = "$want" ] || { echo "$mode: $(state price .error)"; false; }
+    [ "$(jq -r .error "$HC_JOB_PUBLIC/price.json")" = "$want" ]
+  done
+}
+
+@test "a run past its time limit is timeout with time-limit, and an ok run has no error" {
+  load_jobs hang
+  set_options '{"job_timeout":1}'
+  job_file price
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state price .status)" = timeout ]
+  [ "$(state price .error)" = time-limit ]
+  load_jobs write
+  rm -f "$HC_JOB_STATE/price.json"
+  job_file price
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state price .status)" = ok ]
+  [ "$(state price .error)" = null ]
+}
+
+@test "each run's limits are kept in the state and the public copy" {
+  load_jobs write
+  set_options '{"job_timeout":600,"job_max_turns":7}'
+  job_file price
+  jobs_tick
+  jobs_wait_idle
+  [ "$(state price .limits | jq -c .)" = '{"seconds":600,"turns":7}' ]
+  [ "$(jq -c .limits "$HC_JOB_PUBLIC/price.json")" = '{"seconds":600,"turns":7}' ]
 }

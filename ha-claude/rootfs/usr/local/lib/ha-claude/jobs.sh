@@ -403,6 +403,8 @@ _job_public() {
         def word: if type == "string" and test("\\A[a-z][a-z_-]{0,19}\\z") then . else null end;
         {status: (.status | word // "idle"), error: (.error | word),
          last_run: (.last_run | num), last_end: (.last_end | num), next_run: (.next_run | num),
+         limits: (if (.limits | type) == "object"
+                  then {seconds: (.limits.seconds | num), turns: (.limits.turns | num)} else null end),
          request: (if (.request | type) == "object"
                    then {at: (.request.at | num), outcome: (.request.outcome | word), reason: (.request.reason | word)}
                    else null end)}
@@ -561,30 +563,46 @@ jobs_wait_idle() {
 # publish_result reads one, through a copy the Claude user makes, into
 # files of this job's own, so runs that end together do not meet. Fails with
 # one fixed reason in the log; nothing of the content is logged.
+# _job_result <name> <marker> - checks a chat job's result; on a failure,
+# _JOB_WHY holds the word for it, which goes into the state's error:
+# no-result, stale, unreadable, too-large, or result-<reason> for a result
+# that is not well formed (shape, count, type, length, json, other).
+_JOB_WHY=""
 _job_result() {
   local name="$1" file="$HC_JOB_RESULTS/$1.json" rc=0
+  _JOB_WHY=""
   local copy="$HC_STATE/job-$1.in" err="$HC_STATE/job-$1.err" body="$HC_STATE/job-$1.body"
   rm -f -- "$body"
   if [[ ! -e "$file" ]]; then
     log "jobs: $name: no result"
+    _JOB_WHY="no-result"
     return 1
   fi
   if [[ "$file" -ot "$2" ]]; then
     log "jobs: $name: the result is stale"
+    _JOB_WHY=stale
     return 1
   fi
   claude_copy "$file" "$copy" "$HC_JOB_RESULT_BYTES" "$HC_RESULT_WAIT" || rc=$?
   if (( rc == 1 )); then
     log "jobs: $name: the result is unreadable"
+    _JOB_WHY=unreadable
     return 1
   elif (( rc != 0 )); then
     log "jobs: $name: the result is too large"
+    _JOB_WHY="too-large"
     return 1
   fi
   rc=0
   ( umask 077; result_body "$copy" > "$body" 2> "$err" ) || rc=$?
   (( rc == 0 )) || rm -f -- "$body"
-  (( rc == 0 )) || log "jobs: $name: the result is malformed ($(_result_reason "$err"))"
+  if (( rc != 0 )); then
+    local why
+    why="$(_result_reason "$err")"
+    log "jobs: $name: the result is malformed ($why)"
+    [[ "$why" == "not json" ]] && why=json
+    _JOB_WHY="result-$why"
+  fi
   rm -f -- "$copy" "$err"
   return "$rc"
 }
@@ -720,7 +738,7 @@ jobs_after_run() {
 # the repo, does its after steps.
 _job_run() {
   local name="$1" job="$2" agent="$3" repo="$4" by="$5" limit="$6" turns="$7" today="$8"
-  local rc=0 status next started=$SECONDS kept handover
+  local rc=0 status next started=$SECONDS kept handover why=""
   local body="$HC_STATE/job-$1.body"
   local prompt="$HC_STATE/job-$1.prompt" marker="$HC_JOB_STATE/$1.started" out="$HC_STATE/job-$1.log"
   local -a mark=()
@@ -734,23 +752,28 @@ _job_run() {
   rm -f -- "$prompt"
   kept="$HC_STATE/fixed-$agent.body"
   handover="$HC_HANDOVER/$today.md"
+  # Why a run did not end ok, as one word in its error: time-limit, max-turns
+  # (Claude Code said it reached --max-turns), exit (it ended with another
+  # error), handover, result (a file from the repo's result), or the word
+  # _job_result gives for a chat job's result.
   if (( rc == 124 )); then
-    status=timeout
+    status=timeout; why="time-limit"
   elif (( rc != 0 )); then
     status=failed
+    if grep -qi 'max turns' -- "$out" 2>/dev/null; then why="max-turns"; else why="exit"; fi
   elif [[ "$repo" != true ]]; then
-    if _job_result "$name" "$marker"; then status=ok; else status=failed; fi
+    if _job_result "$name" "$marker"; then status=ok; else status=failed; why="$_JOB_WHY"; fi
   # A file from the repo whose context names the handover must have written
   # today's handover file since it started, and its result as well.
   elif jq -e '(.context // []) | index("handover")' <<<"$job" >/dev/null 2>&1 \
        && ! [[ -s "$handover" && ! -L "$handover" && ! "$handover" -ot "$marker" ]]; then
     log "jobs: $name: today's handover file was not written"
-    status=failed
+    status=failed; why="handover"
   else
     rm -f -- "$kept"
-    if publish_result "$agent" "$marker"; then status=ok; else status=failed; fi
+    if publish_result "$agent" "$marker"; then status=ok; else status=failed; why="result"; fi
   fi
-  log "jobs: $name ended $status after $((SECONDS - started)) seconds"
+  log "jobs: $name ended $status${why:+ ($why)} after $((SECONDS - started)) seconds"
   # A request to clear the chat is written before the state that ends the
   # run: sync's wait, and anything else that sees the run ended, then sees
   # the request as well. The outcome itself is raised after the state.
@@ -784,9 +807,9 @@ _job_run() {
       | .finding = $r.verdict | .text = $r.text | .next_run = $next' \
       --slurpfile b "$body" --argjson now "$(date +%s)" --argjson next "$next"
   else
-    _job_update "$name" '.status = $s | .error = null | .last_end = $now | .notify_rose = false
-      | .next_run = $next' \
-      --arg s "$status" --argjson now "$(date +%s)" --argjson next "$next"
+    _job_update "$name" '.status = $s | .error = (if $w == "" then null else $w end) | .last_end = $now
+      | .notify_rose = false | .next_run = $next' \
+      --arg s "$status" --arg w "$why" --argjson now "$(date +%s)" --argjson next "$next"
   fi
   rm -f -- "$marker" "$body"
   [[ "$repo" == true && "$requested" == no ]] && _job_after_raise "$name" "$status" "$by" "$job"
@@ -847,8 +870,8 @@ _job_start() {
   ( umask 077; : > "$HC_STATE/job-$name.log" )
   # shellcheck disable=SC2016  # jq's variables, not the shell's
   _job_update "$name" '.status = "running" | .error = null | .last_run = $now | .next_run = null
-      | .notify_rose = false' \
-    --argjson now "$now"
+      | .notify_rose = false | .limits = {seconds: $limit, turns: $turns}' \
+    --argjson now "$now" --argjson limit "$limit" --argjson turns "$turns"
   _job_run "$name" "$job" "$agent" "$repo" "$by" "$limit" "$turns" "$today" "$marked" &
   printf '%s\n' "$!" > "$HC_JOB_STATE/$name.pid"
   log "jobs: $name started as $agent"
