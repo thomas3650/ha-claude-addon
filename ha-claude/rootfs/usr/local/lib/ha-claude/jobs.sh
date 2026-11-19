@@ -210,6 +210,19 @@ _job_days_from() {
     '$d | strptime("%Y-%m-%d") | mktime as $t | range($a; $b + 1) | $t + . * 86400 | strftime("%Y-%m-%d %u")'
 }
 
+# _job_slots <days> <time> <YYYY-MM-DD> <from> <to> - prints the job's slots
+# on the days from..to after the date, in order: the epoch of its time on
+# each of those days that is one of its days (a list such as "mon,wed").
+_job_slots() {
+  local days="$1" time="$2" day weekday slot
+  local -a names=(mon tue wed thu fri sat sun)
+  while read -r day weekday; do
+    [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
+    slot="$(_job_epoch "$day" "$time")" || continue
+    printf '%s\n' "$slot"
+  done < <(_job_days_from "$3" "$4" "$5")
+}
+
 # job_due <job-json> <state-json> <now-epoch> - returns 0 when the job is
 # due: enabled, not past its end, not running, and its time has come since
 # its last run. A daily job is due at its time on its days, once; a day the
@@ -224,9 +237,8 @@ _job_days_from() {
 # run before the time (a command's) does not count: the time is due when
 # last_run is before it.
 job_due() {
-  local job="$1" state="$2" now="$3" today weekday slot day
+  local job="$1" state="$2" now="$3" today slot from=0
   local enabled end time every days last status missed window
-  local -a names=(mon tue wed thu fri sat sun)
   _job_fields "$job" "$state" || return 1
   [[ "$enabled" == true && "$status" != running ]] || return 1
   today="$(_job_date "$now" %F)" || return 1
@@ -235,18 +247,13 @@ job_due() {
     (( last < 0 || now - last > every * 3600 - 60 ))
     return
   fi
-  if (( window > 0 )); then
-    while read -r day weekday; do
-      [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
-      slot="$(_job_epoch "$day" "$time")" || continue
-      (( now >= slot && now < slot + window && last < slot )) && return 0
-    done < <(_job_days_from "$today" -1 0)
-    return 1
-  fi
-  weekday="$(_job_date "$now" %u)" || return 1
-  [[ ",$days," == *",${names[weekday - 1]},"* ]] || return 1
-  slot="$(_job_epoch "$today" "$time")" || return 1
-  (( now >= slot && last < slot ))
+  # A chat's job has today's slot and no window; a file from the repo has
+  # yesterday's too, while its window lasts.
+  (( window > 0 )) && from=-1
+  while read -r slot; do
+    (( now >= slot && last < slot && (window == 0 || now < slot + window) )) && return 0
+  done < <(_job_slots "$days" "$time" "$today" "$from" 0)
+  return 1
 }
 
 # job_missed <job-json> <state-json> <now-epoch> - prints the slot of a file
@@ -259,23 +266,20 @@ job_due() {
 # that started and was failed (by a restart) set last_run: it is not
 # missed. A file run by an automation is the automation's to watch.
 job_missed() {
-  local job="$1" state="$2" now="$3" today weekday slot day close
+  local job="$1" state="$2" now="$3" today slot close
   local enabled end time every days last status missed window
-  local -a names=(mon tue wed thu fri sat sun)
   _job_fields "$job" "$state" || return 1
   [[ "$enabled" == true && "$status" != running ]] || return 1
   (( window > 0 && every == 0 )) || return 1
   [[ "$(jq -r '.run_by' <<<"$job")" == jobs ]] || return 1
   today="$(_job_date "$now" %F)" || return 1
-  while read -r day weekday; do
-    [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
-    slot="$(_job_epoch "$day" "$time")" || continue
+  while read -r slot; do
     close=$((slot + window))
     if (( now >= close && now < close + HC_JOB_TICK && last < slot && missed != slot )); then
       printf '%s\n' "$slot"
       return 0
     fi
-  done < <(_job_days_from "$today" -1 0)
+  done < <(_job_slots "$days" "$time" "$today" -1 0)
   return 1
 }
 
@@ -286,9 +290,8 @@ job_missed() {
 # run is never a time it will not start at; a run before the time does not
 # count as the time's.
 job_next() {
-  local job="$1" state="$2" now="$3" today day weekday slot next="" from=0
+  local job="$1" state="$2" now="$3" today slot next="" from=0
   local enabled end time every days last status missed window
-  local -a names=(mon tue wed thu fri sat sun)
   _job_fields "$job" "$state" || { echo null; return 0; }
   [[ "$enabled" == true ]] || { echo null; return 0; }
   today="$(_job_date "$now" %F)" || { echo null; return 0; }
@@ -298,12 +301,10 @@ job_next() {
     # Today and the seven days after it: one of them is on the job's days.
     # A file from the repo also looks at yesterday's, while its window lasts.
     (( window > 0 )) && from=-1
-    while read -r day weekday; do
-      [[ ",$days," == *",${names[weekday - 1]},"* ]] || continue
-      slot="$(_job_epoch "$day" "$time")" || continue
+    while read -r slot; do
       (( window > 0 && slot + window <= now )) && continue
       if (( slot > last )); then next="$slot"; break; fi
-    done < <(_job_days_from "$today" "$from" 7)
+    done < <(_job_slots "$days" "$time" "$today" "$from" 7)
   fi
   # An end of null is no end: a fixed job's normal form has it.
   if [[ -z "$next" || ( "$end" != null && "$(_job_date "$next" %F)" > "$end" ) ]]; then
