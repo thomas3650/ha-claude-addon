@@ -127,3 +127,12 @@ repo_name() { jq -r '.agent // "plant-check" | strings' "$1" 2>/dev/null || echo
     [[ "$output" == usage:* ]] || { echo "[$a] $output"; false; }
   done
 }
+
+@test "a writer that stalls is the shape, after the wait and not before" {
+  local start=$SECONDS
+  run env HC_LIB="$LIB" HC_JOB_WAIT=1 "$CMD" --origin chat --since 2026-11-18 --others 0 --name example \
+    < <( { echo "{"; sleep 8; } 2>/dev/null 3>&- )
+  [ "$status" -eq 1 ]
+  [ "$output" = shape ]
+  (( SECONDS - start < 6 ))
+}

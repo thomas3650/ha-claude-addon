@@ -38,6 +38,8 @@ done
 [[ -n "$name" ]] || usage
 others=$((10#$others))
 
+# The time limit is the add-on's own, beside this command.
+: "${HC_LIMIT_BIN:=${BASH_SOURCE[0]%/*}/ha-claude-limit}"
 for f in paths jobs fixed; do
   # shellcheck disable=SC1090
   . "$LIB/$f.sh"
@@ -47,7 +49,13 @@ tmp="$(mktemp "${TMPDIR:-/tmp}/ha-claude-job-check.XXXXXX")" || exit 2
 trap 'rm -f -- "$tmp"' EXIT
 # A job is at most HC_JOB_BYTES; one byte more is read to tell a file that is
 # too large, which is not a job file.
-head -c "$((HC_JOB_BYTES + 1))" > "$tmp"
+# Bounded in time as well: a writer that stalls or never ends is not a job.
+rc=0
+HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$HC_JOB_WAIT" head -c "$((HC_JOB_BYTES + 1))" > "$tmp" || rc=$?
+if (( rc != 0 )); then
+  echo shape
+  exit 1
+fi
 if (( $(wc -c < "$tmp") > HC_JOB_BYTES )); then
   echo shape
   exit 1
