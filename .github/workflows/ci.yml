@@ -43,8 +43,12 @@ jobs:
       - name: Build the image
         run: docker build -t ha-claude:ci ha-claude
 
+      # Ubuntu 24.04 stops unprivileged user namespaces, which Chromium's
+      # sandbox needs; Home Assistant OS does not, so the runner is made alike.
       - name: Container smoke test
-        run: tests/container.sh ha-claude:ci
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          tests/container.sh ha-claude:ci
 
       - name: Root-only unit tests inside the image
         run: |

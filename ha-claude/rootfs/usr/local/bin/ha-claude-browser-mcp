@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# ha-claude-browser-mcp - the browser for the chat and the Web jobs:
+# Microsoft's Playwright MCP over standard input and output, with the
+# image's own headless Chromium. The flags are fixed here, not by the
+# caller: Chromium's sandbox on, a new profile in memory for each session
+# (no cookies, no logins kept), no tools a page offers itself, no snapshot
+# written to a file after a page opens, no images in answers, and no other
+# capability. Which of its tools may be used is the working folder's gate.
+#
+# It opens any public page it is sent to; a page's redirect or its own
+# requests are not filtered here (the house's record on the browser).
+set -u
+if [[ "$(id -u)" == 0 ]]; then
+  echo "ha-claude-browser-mcp: not as root; Chromium's sandbox needs another user" >&2
+  exit 1
+fi
+export PLAYWRIGHT_BROWSERS_PATH="${HC_BROWSERS:-/usr/share/ha-claude/browsers}"
+out="${HOME:-/data/home}/.cache/ha-claude/browser"
+mkdir -p -- "$out" 2>/dev/null || out="$(mktemp -d)"
+exec "${HC_PLAYWRIGHT_MCP:-/usr/local/bin/playwright-mcp}" \
+  --browser chromium --headless --isolated --sandbox --no-webmcp \
+  --snapshot-mode none --image-responses omit \
+  --output-dir "$out" --output-max-size 1048576 \
+  --timeout-navigation 30000
