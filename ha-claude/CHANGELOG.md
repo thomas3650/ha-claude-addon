@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.1.0...v1.2.0) (2026-11-19)
+
+
+### Features
+
+* job_status, a request's outcome, and read_document ([#66](https://github.com/thomas3650/ha-claude-addon/issues/66)) ([b5850cd](https://github.com/thomas3650/ha-claude-addon/commit/b5850cd3d11defe5bb333b7f064b9b88caee170f))
+
 ## [1.1.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.0.0...v1.1.0) (2026-11-19)
 
 
