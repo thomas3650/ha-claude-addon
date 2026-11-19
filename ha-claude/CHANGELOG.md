@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.2.0...v1.3.0) (2026-11-19)
+
+
+### Features
+
+* a headless browser for the chat and the Web jobs ([#68](https://github.com/thomas3650/ha-claude-addon/issues/68)) ([241e930](https://github.com/thomas3650/ha-claude-addon/commit/241e93096cd4d1a2faabe90a5142b4c658c92b29))
+
 ## [1.2.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.1.0...v1.2.0) (2026-11-19)
 
 
