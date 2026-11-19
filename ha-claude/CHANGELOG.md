@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.3.0...v1.4.0) (2026-11-19)
+
+
+### Features
+
+* why a job's run failed, and its limits, in the state and job_status ([#70](https://github.com/thomas3650/ha-claude-addon/issues/70)) ([e3a3704](https://github.com/thomas3650/ha-claude-addon/commit/e3a37041549312852b62b97a6f6ee576848db87a))
+
 ## [1.3.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.2.0...v1.3.0) (2026-11-19)
 
 
