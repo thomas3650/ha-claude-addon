@@ -1,6 +1,8 @@
 # The environment of everything that runs as the Claude user. Nothing from the
 # container's own environment is passed on, so the token Home Assistant
 # injects (SUPERVISOR_TOKEN) never reaches Claude Code.
+: "${HC_CLAUDE_BIN:=claude}"
+: "${HC_LIMIT_BIN:=/usr/local/bin/ha-claude-limit}"
 
 resolve_tz() {
   if [[ -z "${TZ:-}" ]]; then
@@ -58,4 +60,26 @@ as_claude() {
   else
     env -i "${vars[@]}" "$@"
   fi
+}
+
+# claude_once <agent> <seconds> <turns> <prompt-file> <out-file> [VAR=value...]
+# - runs Claude Code once as the Claude user, without a terminal, as the
+# agent, from the working folder, within the time limit and the turn limit,
+# with automatic memory off, and marked as unattended for the gate
+# (HA_CLAUDE_UNATTENDED holds the agent's name, for a hook to read). The
+# first message comes on standard input from the prompt file, so it is on no
+# command line; the output is added to the out file. Each VAR=value goes
+# into the run's environment as well. Returns Claude Code's status, 124 when
+# the time limit stopped it. Waited for in the background, so a stop signal
+# is handled at once.
+claude_once() {
+  local agent="$1" seconds="$2" turns="$3" prompt="$4" out="$5"
+  shift 5
+  ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
+      HA_CLAUDE_UNATTENDED="$agent" "$@" \
+      "$HC_LIMIT_BIN" "$seconds" "$HC_CLAUDE_BIN" -p \
+      --agent "$agent" --max-turns "$turns" --permission-mode default \
+      --no-session-persistence \
+  ) <"$prompt" >>"$out" 2>&1 &
+  wait $!
 }

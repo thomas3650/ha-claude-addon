@@ -192,8 +192,10 @@ For any other agent the add-on runs Claude Code once, without a terminal,
 as the agent of that name from the working folder
 (`.claude/agents/<agent>.md`): with automatic memory off, with no
 transcript kept, and with the time limit `run_timeout` and the turn limit
-`run_max_turns`. The chat session is not ended or restarted. While such a
-run is in progress the add-on handles no other command.
+`run_max_turns`. Its first message comes on standard input, as a job's
+does: "Today is <date>. Your result file is /data/results/<agent>.json. Do
+your run." The chat session is not ended or restarted. While such a run is
+in progress the add-on handles no other command.
 
 A name is a lowercase letter followed by at most 31 lowercase letters,
 digits or `-`. The chat's own agent, `chat`, is refused: it has the tools of

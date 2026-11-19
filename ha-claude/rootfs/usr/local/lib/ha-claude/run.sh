@@ -1,12 +1,7 @@
-# The run command's agent: Claude Code once, without a terminal, as the
-# agent the command named, from the working folder, with a turn limit and a
-# time limit and with automatic memory off. The add-on knows nothing about
-# what the agent is for. It tells the run where its result file goes, marks
-# the run as unattended in its environment (HA_CLAUDE_UNATTENDED holds the
-# agent's name, for a hook to read), and afterwards checks and raises the
-# result file.
-: "${HC_CLAUDE_BIN:=claude}"
-: "${HC_LIMIT_BIN:=/usr/local/bin/ha-claude-limit}"
+# The run command's agent: Claude Code once (claude_once), as the agent the
+# command named, with the options run_timeout and run_max_turns. The add-on
+# knows nothing about what the agent is for. It tells the run where its
+# result file goes, and afterwards checks and raises the result file.
 
 # True when the name is one the run command may start: a short name of
 # lowercase letters, digits and hyphens, so it cannot leave the agents
@@ -30,30 +25,26 @@ run_configured() {
 # ended. The run's output can hold what the agent read, so it goes to a file
 # only root can read, not to the log.
 run_agent() {
-  local _ra_agent="${2:-}" _ra_today _ra_limit _ra_turns _ra_log _ra_rc=0 _ra_started=$SECONDS
+  local _ra_agent="${2:-}" _ra_limit _ra_turns _ra_log _ra_prompt _ra_rc=0 _ra_started=$SECONDS
   local _ra_marker="$HC_STATE/run-${2:-}.started"
   if ! run_configured "$_ra_agent"; then
     printf -v "$1" '%s' not_configured
     return 0
   fi
-  _ra_today="$(date +%F)"
   _ra_limit="$(opt_number '.run_timeout' 900)"
   _ra_turns="$(opt_number '.run_max_turns' 60)"
   _ra_log="$HC_STATE/run-$_ra_agent.log"
+  _ra_prompt="$HC_STATE/run-$_ra_agent.prompt"
   mkdir -p "$HC_STATE"
   declare -F clean_handover >/dev/null && clean_handover
   clear_result "$_ra_agent"
   : > "$_ra_marker"
   rm -f "$_ra_log"
-  ( umask 077; : > "$_ra_log" )
-  ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-      HA_CLAUDE_UNATTENDED="$_ra_agent" \
-      "$HC_LIMIT_BIN" "$_ra_limit" "$HC_CLAUDE_BIN" \
-      -p "Today is $_ra_today. Your result file is $HC_RESULTS/$_ra_agent.json. Do your run." \
-      --agent "$_ra_agent" --max-turns "$_ra_turns" --permission-mode default \
-      --no-session-persistence \
-  ) </dev/null >>"$_ra_log" 2>&1 &
-  wait $! || _ra_rc=$?
+  ( umask 077; : > "$_ra_log"
+    printf 'Today is %s. Your result file is %s/%s.json. Do your run.\n' \
+      "$(date +%F)" "$HC_RESULTS" "$_ra_agent" > "$_ra_prompt" )
+  claude_once "$_ra_agent" "$_ra_limit" "$_ra_turns" "$_ra_prompt" "$_ra_log" || _ra_rc=$?
+  rm -f -- "$_ra_prompt"
   log "run: $_ra_agent ended with status $_ra_rc after $((SECONDS - _ra_started)) seconds"
   if (( _ra_rc == 124 )); then
     printf -v "$1" '%s' timeout

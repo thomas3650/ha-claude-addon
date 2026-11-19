@@ -385,13 +385,13 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   [ "$(cat "$CALLS")" = "outcome run failed beta-run command" ]
 }
 
-@test "run of an agent with no job file is the run command as before" {
+@test "run of an agent with no job file is the run command, with the job runs' first line" {
   runner_setup
   touch "$HC_WORKSPACE/.claude/agents/gamma-run.md"
   handle_command '"run gamma-run"'
   grep -qx 'outcome run ok gamma-run command' "$CALLS"
   [ -z "$(ls "$HC_JOB_STATE"/*.json 2>/dev/null)" ]
-  [[ "$(cat "$STUB/gamma-run.argv")" == *"Today is $TODAY. Your result file is $HC_RESULTS/gamma-run.json. Do your run."* ]]
+  [ "$(cat "$STUB/gamma-run.stdin")" = "Today is $TODAY. Your result file is $HC_RESULTS/gamma-run.json. Do your run." ]
 }
 
 @test "repo runs start with every place taken by chat jobs, and without a broker" {

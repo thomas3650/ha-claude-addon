@@ -340,7 +340,6 @@ job_next() {
 # its finding stays with the job; a file from the repo writes
 # HC_RESULTS/<agent>.json, raised as ha_claude_result, and its outcome is
 # raised as ha_claude_outcome.
-: "${HC_CLAUDE_BIN:=claude}"
 : "${HC_JOB_RESULT_BYTES:=32768}"
 
 # Called with a job's name after its state changed or was removed; Home
@@ -498,7 +497,7 @@ jobs_startup() {
         "${HC_FIXED_LOCK:-$state/fixed.lock}.d"
   rm -f -- "$dir"/*.pid "$dir"/*.started "$dir"/*.limit "$dir"/*.tmp \
         "$state"/job-*.prompt "$state"/job-*.in "$state"/job-*.err "$state"/job-*.body "$state"/job.in \
-        "$state"/fixed-*.started "$state"/result-* "$state"/run-*.started "$state"/after/.*.tmp
+        "$state"/fixed-*.started "$state"/result-* "$state"/run-*.started "$state"/run-*.prompt "$state"/after/.*.tmp
 }
 
 # _job_kill_tree <pid> - stops a process and everything it started, the
@@ -726,12 +725,9 @@ jobs_after_run() {
 }
 
 # _job_run <name> <job-json> <agent> <repo> <by> <limit> <turns> <today> <mark>
-# - one run, in the background: Claude Code once, without a terminal, as the
-# job's agent, from the working folder, with a time limit and a turn limit
-# and with automatic memory off. The first message comes on standard input
-# from a file only root can read, so the task is on no command line. The run
-# is marked as unattended for the gate (HA_CLAUDE_UNATTENDED holds the
-# agent), and, when mark is yes, as the job (HA_CLAUDE_JOB). <repo> is true
+# - one run, in the background: Claude Code once (claude_once) as the job's
+# agent, with the first message from a file only root can read, and, when
+# mark is yes, marked as the job (HA_CLAUDE_JOB). <repo> is true
 # for a file from the repo; <today> the day the run started. Afterwards the
 # runner checks the result, writes how the run ended and, for a file from
 # the repo, does its after steps.
@@ -742,12 +738,7 @@ _job_run() {
   local prompt="$HC_STATE/job-$1.prompt" marker="$HC_JOB_STATE/$1.started" out="$HC_STATE/job-$1.log"
   local -a mark=()
   [[ "$9" == yes ]] && mark=(HA_CLAUDE_JOB="$name")
-  ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-      HA_CLAUDE_UNATTENDED="$agent" ${mark[@]+"${mark[@]}"} \
-      "$HC_LIMIT_BIN" "$limit" "$HC_CLAUDE_BIN" -p \
-      --agent "$agent" --max-turns "$turns" --permission-mode default \
-      --no-session-persistence \
-  ) <"$prompt" >>"$out" 2>&1 || rc=$?
+  claude_once "$agent" "$limit" "$turns" "$prompt" "$out" ${mark[@]+"${mark[@]}"} || rc=$?
   rm -f -- "$prompt"
   kept="$HC_STATE/fixed-$agent.body"
   handover="$HC_HANDOVER/$today.md"
