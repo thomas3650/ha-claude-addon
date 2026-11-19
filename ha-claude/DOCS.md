@@ -363,7 +363,7 @@ network, and runs as the Claude user, as the chat does. It has four tools:
 | `job_list` | none | Every job file in `/data/jobs/` (not `ended/`): its name, whether it is from the repo, `agent`, `schedule`, `enabled`, `end`, its `description` or the first 200 characters of its `task`, and its result file |
 | `job_set` | `name`, `job` (the whole file, an object) | Checks the job with `ha-claude-job-check` and writes it whole, to `<name>.json.new` and then in its place. A new chat job has `created` today, one that is there keeps its own; the 10 enabled jobs are counted again under a lock just before the write. For a file from the working folder, only `schedule`, `enabled` and `task` may differ from the file in place, and only when it has `run_by` `jobs` |
 | `job_run_now` | `name` | For a chat's job that is there and valid, not a file from the working folder: writes an empty request `/data/jobs/.requests/<name>` for the add-on |
-| `job_status` | `name` | How the job is doing, as one JSON object: `status` (`idle`, `running`, `ok`, `failed`, `timeout`, `invalid`, or `unknown` when there is no public copy), `queued` (true while its request file is there), `last_run`, `last_end` and `next_run` in local time with the offset, `error`, and `request`, the outcome of the last request the add-on read (`at`, `outcome` `started`, `dropped` or `failed`, and `reason`). It reads the public copy below and never the job state; it holds no finding |
+| `job_status` | `name` | How the job is doing, as one JSON object: `status` (`idle`, `running`, `ok`, `failed`, `timeout`, `invalid`, or `unknown` when there is no public copy), `queued` (true while its request file is there), `last_run`, `last_end` and `next_run` in local time with the offset, `error`, `limits` (the last run's `seconds` and `turns`), and `request`, the outcome of the last request the add-on read (`at`, `outcome` `started`, `dropped` or `failed`, and `reason`). It reads the public copy below and never the job state; it holds no finding |
 
 A refusal is one line, `<word>: <field>`, the word as the check's above, or
 `created`, `differs`, `run_by`, `repo`, `missing` or `busy`; never the file.
@@ -382,6 +382,14 @@ running already, only while Home Assistant can see the jobs, and within
 entities, as a tick's does. Anything else (a file from the working folder,
 a name with no valid file) is dropped, and the log says why.
 
+A run that does not end ok gets a word in the state's `error`: `time-limit`
+(it reached its time limit), `max-turns` (Claude Code reached
+`--max-turns`), `exit` (Claude Code ended with another error), for a chat's
+job `no-result`, `stale`, `unreadable`, `too-large` or `result-<reason>`
+(`shape`, `count`, `type`, `length`, `json` or `other`) for its result, and
+for a file from the repo `handover` or `result`. Each run's limits, its
+seconds and turns, are kept as `limits`.
+
 Each request's outcome is kept in the job's state as `request`: `started`;
 `failed` with the word the start set (such as `agent`); or `dropped` with
 `repo`, `running`, `ended`, `off`, `limit`, `invalid`, `no-broker` or
@@ -391,8 +399,8 @@ tick makes one), so a name with no file is only logged. The state's own
 
 The add-on keeps a public copy of each job's state for `job_status`, in
 `/data/status/jobs/<name>.json`, root's and readable by the Claude user:
-`status`, `error`, `last_run`, `last_end`, `next_run` (epochs) and
-`request`, never the finding, its text or anything a run wrote. It is
+`status`, `error`, `last_run`, `last_end`, `next_run` (epochs), `limits`
+and `request`, never the finding, its text or anything a run wrote. It is
 written whole with each change of the state and at every start, and
 removed with the state.
 

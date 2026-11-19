@@ -498,7 +498,7 @@ pub() { jq -r "$2" "$HC_JOB_PUBLIC/$1.json"; }
   load_requests
   job_file price
   _job_update price '.status = "ok" | .finding = "cheap" | .text = "the shop says" | .notify = true | .last_run = 5'
-  [ "$(jq -c 'keys' "$HC_JOB_PUBLIC/price.json")" = '["error","last_end","last_run","next_run","request","status"]' ]
+  [ "$(jq -c 'keys' "$HC_JOB_PUBLIC/price.json")" = '["error","last_end","last_run","limits","next_run","request","status"]' ]
   ! grep -q cheap "$HC_JOB_PUBLIC/price.json"
   ! grep -q "shop says" "$HC_JOB_PUBLIC/price.json"
   [ "$(stat -c %a "$HC_JOB_PUBLIC/price.json")" = 644 ]

@@ -403,7 +403,8 @@ function jobStatus(args) {
   }
   if (!isObject(copy)) {
     return JSON.stringify({
-      name, status: 'unknown', queued, last_run: null, last_end: null, next_run: null, error: null, request: null,
+      name, status: 'unknown', queued, last_run: null, last_end: null, next_run: null, error: null, limits: null,
+      request: null,
     });
   }
   const r = isObject(copy.request) ? copy.request : null;
@@ -415,6 +416,10 @@ function jobStatus(args) {
     last_end: localTime(copy.last_end),
     next_run: localTime(copy.next_run),
     error: wordOf(copy.error),
+    limits: isObject(copy.limits) ? {
+      seconds: Number.isInteger(copy.limits.seconds) ? copy.limits.seconds : null,
+      turns: Number.isInteger(copy.limits.turns) ? copy.limits.turns : null,
+    } : null,
     request: r === null ? null : {
       at: localTime(r.at),
       outcome: OUTCOMES.includes(r.outcome) ? r.outcome : null,
@@ -463,8 +468,10 @@ const TOOLS = [
     description: 'How a job is doing, a chat\'s job or a file from the repo: one JSON object with status (idle, '
       + 'running, ok, failed, timeout, invalid, or unknown when the add-on has written nothing for it), queued '
       + '(true while a job_run_now request waits for the add-on), last_run, last_end and next_run (local time), '
-      + 'error, and request: the outcome of the last request the add-on read (started, dropped or failed, with '
-      + 'its reason). It never holds what the job found: read its result file for that.',
+      + 'error (why the last run did not end ok: time-limit, max-turns, exit, no-result, stale, unreadable, '
+      + 'too-large, result-<reason>, handover or result), limits (the last run\'s seconds and turns), and '
+      + 'request: the outcome of the last request the add-on read (started, dropped or failed, with its '
+      + 'reason). It never holds what the job found: read its result file for that.',
     inputSchema: {
       type: 'object',
       properties: { name: NAME_SCHEMA },
