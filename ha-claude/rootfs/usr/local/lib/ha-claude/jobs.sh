@@ -164,8 +164,7 @@ _job_epoch() {
 _job_repo_limit() {
   local limit
   limit="$(jq -r '.timeout // empty' <<<"$1")"
-  [[ "$limit" =~ ^[0-9]+$ ]] || limit="$(opt '.run_timeout' 900)"
-  [[ "$limit" =~ ^[0-9]+$ ]] || limit=900
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit="$(opt_number '.run_timeout' 900)"
   printf '%s\n' "$limit"
 }
 
@@ -532,7 +531,7 @@ jobs_wait_cap() {
   while read -r name; do
     [[ -n "$name" ]] || continue
     limit="$(cat "$HC_JOB_STATE/$name.limit" 2>/dev/null)"
-    [[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit="$(_morning_number '.job_timeout' 1800)"
+    [[ "$limit" =~ ^[0-9]{1,5}$ ]] || limit="$(opt_number '.job_timeout' 1800)"
     (( limit > max )) && max="$limit"
   done < <(jobs_running)
   if (( max < 0 )); then echo 0; else echo "$((max + 90))"; fi
@@ -558,12 +557,11 @@ jobs_wait_idle() {
   done
 }
 
-# _job_result <name> <marker> - writes the job's result, cleaned, to
-# HC_STATE/job-<name>.body, which only root can read. It is read as
-# publish_result reads one, through a copy the Claude user makes, into
-# files of this job's own, so runs that end together do not meet. Fails with
-# one fixed reason in the log; nothing of the content is logged.
-# _job_result <name> <marker> - checks a chat job's result; on a failure,
+# _job_result <name> <marker> - checks a chat job's result and writes it,
+# cleaned, to HC_STATE/job-<name>.body, which only root can read. It is read
+# as publish_result reads one, through a copy the Claude user makes, into
+# files of this job's own, so runs that end together do not meet. On a
+# failure the log has one fixed reason, nothing of the content, and
 # _JOB_WHY holds the word for it, which goes into the state's error:
 # no-result, stale, unreadable, too-large, or result-<reason> for a result
 # that is not well formed (shape, count, type, length, json, other).
@@ -846,12 +844,12 @@ _job_start() {
   if [[ "$repo" == true ]]; then
     limit="$(_job_repo_limit "$job")"
     turns="$(jq -r '.max_turns // empty' <<<"$job")"
-    [[ "$turns" =~ ^[0-9]+$ ]] || turns="$(_morning_number '.run_max_turns' 60)"
+    [[ "$turns" =~ ^[0-9]+$ ]] || turns="$(opt_number '.run_max_turns' 60)"
     # The tool calls are marked with the job only when the policy asks.
     if ! declare -F fixed_marked >/dev/null || ! fixed_marked "$name"; then marked=no; fi
   else
-    limit="$(_morning_number '.job_timeout' 1800)"
-    turns="$(_morning_number '.job_max_turns' 60)"
+    limit="$(opt_number '.job_timeout' 1800)"
+    turns="$(opt_number '.job_max_turns' 60)"
   fi
   today="$(date +%F)"
   ( umask 077; job_first_message "$name" "$job" > "$HC_STATE/job-$name.prompt" )
@@ -1029,7 +1027,7 @@ _jobs_tick_fixed() {
 # jobs_parallel, 3 when unset, from 1 to 10.
 _jobs_parallel() {
   local parallel
-  parallel="$(_morning_number '.jobs_parallel' 3)"
+  parallel="$(opt_number '.jobs_parallel' 3)"
   (( parallel >= 1 )) || parallel=1
   (( parallel <= 10 )) || parallel=10
   printf '%s\n' "$parallel"

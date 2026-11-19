@@ -37,8 +37,8 @@ run_agent() {
     return 0
   fi
   _ra_today="$(date +%F)"
-  _ra_limit="$(_morning_number '.run_timeout' 900)"
-  _ra_turns="$(_morning_number '.run_max_turns' 60)"
+  _ra_limit="$(opt_number '.run_timeout' 900)"
+  _ra_turns="$(opt_number '.run_max_turns' 60)"
   _ra_log="$HC_STATE/run-$_ra_agent.log"
   mkdir -p "$HC_STATE"
   declare -F clean_handover >/dev/null && clean_handover
