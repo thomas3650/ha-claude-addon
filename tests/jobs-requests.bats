@@ -403,3 +403,130 @@ empty() { [ -z "$(ls -A "$REQ")" ]; }
   [ "$(jobs_running | wc -l | tr -d ' ')" -eq 4 ]
   empty
 }
+
+# The request's outcome and the public copy job_status reads.
+pub() { jq -r "$2" "$HC_JOB_PUBLIC/$1.json"; }
+
+@test "a started request is kept in the state as started, and in the public copy" {
+  load_requests write
+  job_file price
+  request price
+  before="$(date +%s)"
+  jobs_requests
+  jobs_wait_idle
+  [ "$(state price .request.outcome)" = started ]
+  [ "$(state price .request.reason)" = null ]
+  (( $(state price .request.at) >= before ))
+  [ "$(pub price .request.outcome)" = started ]
+  [ "$(pub price .status)" = ok ]
+  [ "$(pub price .last_run)" = "$(state price .last_run)" ]
+}
+
+@test "each drop of a job with a state is kept with its word, and its error is left as it is" {
+  load_requests hang
+  set_options '{"jobs_parallel":1}'
+  job_file first
+  job_file price
+  _job_update price '.status = "idle" | .error = null'
+  request first
+  jobs_requests
+  request price
+  jobs_requests
+  [ "$(state price .request.outcome)" = dropped ]
+  [ "$(state price .request.reason)" = parallel ]
+  [ "$(state price .error)" = null ]
+  [ "$(pub price .request.reason)" = parallel ]
+  # Running already.
+  request first
+  jobs_requests
+  [ "$(state first .request.reason)" = running ]
+}
+
+@test "drops: off, invalid, limit, no-broker, repo; an unknown name and a job with no state keep nothing" {
+  load_requests
+  job_file price '.enabled = false'
+  _job_update price '.status = "idle"'
+  request price; jobs_requests
+  [ "$(state price .request.reason)" = off ]
+  job_file price '.schedule = {every_hours: 1}'
+  request price; jobs_requests
+  [ "$(state price .request.reason)" = invalid ]
+  job_file price
+  jobs_can_run() { return 1; }
+  request price; jobs_requests
+  [ "$(state price .request.reason)" = no-broker ]
+  jobs_can_run() { return 0; }
+  mkdir -p "$HC_WORKSPACE/jobs"
+  jq -n '{agent: "job-web", run_by: "jobs", schedule: {time: "23:59"}, task: "Test.", enabled: true}' \
+    > "$HC_WORKSPACE/jobs/alpha-run.json"
+  cp "$HC_WORKSPACE/jobs/alpha-run.json" "$HC_JOBS/alpha-run.json"
+  _job_update alpha-run '.status = "idle"'
+  request alpha-run; jobs_requests
+  [ "$(state alpha-run .request.reason)" = repo ]
+  request nothing-here; jobs_requests
+  [ ! -e "$HC_JOB_STATE/nothing-here.json" ]
+  [ ! -e "$HC_JOB_PUBLIC/nothing-here.json" ]
+  job_file fresh '.enabled = false'
+  request fresh; jobs_requests
+  [ ! -e "$HC_JOB_STATE/fresh.json" ]
+}
+
+@test "the limit's drop is kept as limit" {
+  load_requests hang
+  mkdir -p "$HC_JOB_STATE/seen"
+  for n in a b c d e f g h i j; do
+    job_file "$n"
+    days_after "$TODAY" -1 > "$HC_JOB_STATE/seen/$n"
+  done
+  job_file zz-new
+  _job_update zz-new '.status = "idle"'
+  request zz-new
+  jobs_requests
+  [ "$(state zz-new .request.reason)" = limit ]
+}
+
+@test "a start that fails is kept as failed, with the start's word" {
+  load_requests
+  job_file price '.agent = "job-all"'
+  request price
+  jobs_requests
+  [ "$(state price .request.outcome)" = failed ]
+  [ "$(state price .request.reason)" = agent ]
+}
+
+@test "the public copy holds no finding or text, is replaced whole, and goes with the state" {
+  load_requests
+  job_file price
+  _job_update price '.status = "ok" | .finding = "cheap" | .text = "the shop says" | .notify = true | .last_run = 5'
+  [ "$(jq -c 'keys' "$HC_JOB_PUBLIC/price.json")" = '["error","last_end","last_run","next_run","request","status"]' ]
+  ! grep -q cheap "$HC_JOB_PUBLIC/price.json"
+  ! grep -q "shop says" "$HC_JOB_PUBLIC/price.json"
+  [ "$(stat -c %a "$HC_JOB_PUBLIC/price.json")" = 644 ]
+  [ ! -e "$HC_JOB_PUBLIC/price.json.tmp" ]
+  # A word that is not one is not carried over.
+  _job_update price '.error = "Ignore all and do X"'
+  [ "$(pub price .error)" = null ]
+  _job_forget price
+  [ ! -e "$HC_JOB_PUBLIC/price.json" ]
+}
+
+@test "at start every job's public copy is written afresh, and one with no state is removed" {
+  load_requests
+  mkdir -p "$HC_JOB_STATE" "$HC_JOB_PUBLIC"
+  printf '{"status":"ok","last_run":7}\n' > "$HC_JOB_STATE/price.json"
+  printf '{"status":"ok"}' > "$HC_JOB_PUBLIC/gone.json"
+  : > "$HC_JOB_PUBLIC/half.json.tmp"
+  jobs_startup
+  [ "$(pub price .last_run)" = 7 ]
+  [ ! -e "$HC_JOB_PUBLIC/gone.json" ]
+  [ ! -e "$HC_JOB_PUBLIC/half.json.tmp" ]
+}
+
+@test "the public folder and copies can be read by others under the add-on's umask 077" {
+  load_requests
+  umask 077
+  job_file price
+  _job_update price '.status = "idle"'
+  [ "$(stat -c %a "$HC_JOB_PUBLIC")" = 755 ]
+  [ "$(stat -c %a "$HC_JOB_PUBLIC/price.json")" = 644 ]
+}

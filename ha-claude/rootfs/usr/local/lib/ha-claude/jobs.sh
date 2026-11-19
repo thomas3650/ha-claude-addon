@@ -374,7 +374,43 @@ _job_update() {
   [[ "$new" == "$old" && -f "$file" ]] && return 0
   mkdir -p "$HC_JOB_STATE"
   ( umask 077; printf '%s\n' "$new" > "$file.tmp" ) && mv -f "$file.tmp" "$file"
+  _job_public "$name"
   jobs_on_change "$name"
+}
+
+# _job_public <name> - writes the job's public copy, HC_JOB_PUBLIC/<name>.json,
+# which the Claude user reads and cannot write: the chat's job_status reads
+# it. It holds the status, the error word, the times as epochs and the
+# outcome of the last request, never the finding, its text or anything a run
+# wrote. Written whole and renamed in place; removed when the job has no
+# state.
+_job_public() {
+  local name="$1" dir="${HC_JOB_PUBLIC:?}" file tmp
+  job_name_ok "$name" || return 0
+  file="$dir/$name.json"
+  if [[ ! -f "$HC_JOB_STATE/$name.json" ]]; then
+    rm -f -- "$file"
+    return 0
+  fi
+  # Readable by the Claude user, whatever the add-on's own umask.
+  ( umask 022; mkdir -p "$dir" ) 2>/dev/null || return 0
+  # A temporary file of its own: the runner and the command loop may write
+  # the same job's copy at once.
+  tmp="$(mktemp "$dir/.$name.XXXXXX.tmp" 2>/dev/null)" || return 0
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  if ( umask 022; jq -c '
+        def num: if type == "number" then . else null end;
+        def word: if type == "string" and test("\\A[a-z][a-z_-]{0,19}\\z") then . else null end;
+        {status: (.status | word // "idle"), error: (.error | word),
+         last_run: (.last_run | num), last_end: (.last_end | num), next_run: (.next_run | num),
+         request: (if (.request | type) == "object"
+                   then {at: (.request.at | num), outcome: (.request.outcome | word), reason: (.request.reason | word)}
+                   else null end)}
+      ' "$HC_JOB_STATE/$name.json" > "$tmp" ) 2>/dev/null; then
+    chmod 644 -- "$tmp" && mv -f -- "$tmp" "$file"
+  else
+    rm -f -- "$tmp"
+  fi
 }
 
 # _job_forget <name> - removes the job's state and tells Home Assistant.
@@ -382,6 +418,7 @@ _job_forget() {
   local name="$1" dir="${HC_JOB_STATE:?}"
   job_name_ok "$name" || return 0
   rm -f -- "$dir/$name.json" "$dir/$name.pid" "$dir/$name.started" "$dir/$name.limit"
+  _job_public "$name"
   jobs_on_change "$name"
 }
 
@@ -436,6 +473,20 @@ jobs_startup() {
       log "jobs: $name was running when the add-on stopped"
       _job_update "$name" '.status = "failed" | .error = "stopped" | .notify_rose = false'
     fi
+  done
+  # Every job's public copy afresh, as one whose state did not change since
+  # an upgrade has none yet; a copy with no state left is removed.
+  ( umask 022; mkdir -p "${HC_JOB_PUBLIC:?}" ) 2>/dev/null || true
+  rm -f -- "$HC_JOB_PUBLIC"/*.tmp "$HC_JOB_PUBLIC"/.*.tmp
+  for file in "$dir"/*.json; do
+    [[ -f "$file" ]] || continue
+    name="${file##*/}"; name="${name%.json}"
+    _job_public "$name"
+  done
+  for file in "$HC_JOB_PUBLIC"/*.json; do
+    [[ -e "$file" || -L "$file" ]] || continue
+    name="${file##*/}"; name="${name%.json}"
+    [[ -f "$dir/$name.json" ]] || rm -f -- "$file"
   done
   # The listener is gone with the old container too, and so is any holder of
   # the publishing lock or of the placing's lock, and every run's scratch.
@@ -1095,45 +1146,74 @@ HC_JOB_REQUESTS_LINK=0
 # counted within the limit as the tick counts it, enabled, not past its end,
 # not running, only while Home Assistant can see the jobs, and within
 # jobs_parallel. Its run sets last_run as a tick's does. Otherwise nothing
-# starts, the job's state is left as it is, and the log says why.
+# starts, and the log says why. Either way the outcome goes into the job's
+# state as request, {at, outcome, reason}, for job_status and the sensor:
+# started; failed with the word the start set; or dropped with one of
+#   repo       a file from the repo
+#   running    it runs already
+#   ended      past its end
+#   off        not enabled
+#   limit      over the enabled jobs' limit (the scan's word limit)
+#   invalid    the file fails the check (any other word of the scan)
+#   no-broker  Home Assistant cannot see the jobs
+#   parallel   jobs_parallel runs are on
+# A drop is kept only for a job that has a state already (every tick makes
+# one): a name with no job file, or one the tick has not seen, is only
+# logged, and a job past its end is left to the tick.
 jobs_request() {
-  local name="$1" now today why="" count parallel
+  local name="$1" now today why="" word="" count parallel err
   now="$(date +%s)"
   today="$(_job_date "$now" %F)" || return 0
   mkdir -p "$HC_JOB_STATE"
   if declare -F fixed_is >/dev/null && fixed_is "$name"; then
-    why="it is a file from the repo"
+    why="it is a file from the repo"; word=repo
   else
     _jobs_reap
     if [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name"; then
-      why="it runs already"
+      why="it runs already"; word=running
     else
       _jobs_scan "$today" "$now" "$name"
       case "$_JOBS_WANT" in
-        ok) [[ "$(jq -r '.enabled' <<<"$_JOBS_WANT_JOB")" == true ]] || why="it is switched off" ;;
+        ok) [[ "$(jq -r '.enabled' <<<"$_JOBS_WANT_JOB")" == true ]] || { why="it is switched off"; word=off; } ;;
         "") why="there is no such job" ;;
-        running) why="it runs already" ;;
-        ended) why="it has ended" ;;
-        *) why="it is not valid ($_JOBS_WANT)" ;;
+        running) why="it runs already"; word=running ;;
+        ended) why="it has ended"; word=ended ;;
+        limit) why="it is not valid (limit)"; word=limit ;;
+        *) why="it is not valid ($_JOBS_WANT)"; word=invalid ;;
       esac
     fi
   fi
   if [[ -z "$why" ]]; then
     # A request tries the broker afresh, as a tick does.
     jobs_tick_begin
-    jobs_can_run || why="Home Assistant cannot see the jobs"
+    jobs_can_run || { why="Home Assistant cannot see the jobs"; word=no-broker; }
   fi
   if [[ -z "$why" ]]; then
     parallel="$(_jobs_parallel)"
     count="$(jobs_running | wc -l | tr -d ' ')"
-    (( count < parallel )) || why="$count runs are on already"
+    (( count < parallel )) || { why="$count runs are on already"; word=parallel; }
   fi
   if [[ -n "$why" ]]; then
     log "jobs: the request to run $name now is dropped: $why"
+    [[ -n "$word" && -f "$HC_JOB_STATE/$name.json" ]] && _job_request_outcome "$name" "$now" dropped "$word"
     return 0
   fi
   log "jobs: $name runs now, as the chat asked"
-  _job_start "$name" "$_JOBS_WANT_JOB" "$now" || true
+  if _job_start "$name" "$_JOBS_WANT_JOB" "$now"; then
+    _job_request_outcome "$name" "$now" started ""
+  else
+    err="$(jq -r '.error // "start"' <<<"$(_job_state "$name")")"
+    _job_request_outcome "$name" "$now" failed "$err"
+  fi
+}
+
+# _job_request_outcome <name> <epoch> <outcome> <reason> - keeps the outcome
+# of the job's last request in its state; the state's error is left as it
+# is, as every tick sets that afresh.
+_job_request_outcome() {
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  _job_update "$1" '.request = {at: $at, outcome: $o, reason: (if $r == "" then null else $r end)}' \
+    --argjson at "$2" --arg o "$3" --arg r "$4"
 }
 
 # _jobs_request_stuck <entry> - true when the entry is one that could not

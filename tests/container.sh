@@ -83,6 +83,12 @@ docker exec "$name" runuser -u claude -- ls /data/state >/dev/null 2>&1 && fail 
 init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}'
 answer="$(docker exec -i -u claude "$name" /usr/local/bin/ha-claude-jobs-mcp <<<"$init")" || fail "the jobs server did not run"
 grep -q '"protocolVersion":"2025-06-18"' <<<"$answer" || fail "the jobs server did not answer initialize: $answer"
+answer="$(docker exec -i -u claude "$name" /usr/local/bin/ha-claude-docs-mcp <<<"$init")" || fail "the documents server did not run"
+grep -q '"name":"documents"' <<<"$answer" || fail "the documents server did not answer initialize: $answer"
+docker exec "$name" pdftotext -v >/dev/null 2>&1 || fail "pdftotext is missing"
+# The jobs' public copies can be read by the Claude user and not written.
+docker exec "$name" runuser -u claude -- test -r /data/status || fail "status is not readable by claude"
+docker exec "$name" runuser -u claude -- touch /data/status/x 2>/dev/null && fail "status is writable by claude"
 docker exec "$name" runuser -u claude -- touch /data/handover/ok || fail "handover is not writable by claude"
 docker exec "$name" runuser -u claude -- touch /data/results/ok || fail "results is not writable by claude"
 

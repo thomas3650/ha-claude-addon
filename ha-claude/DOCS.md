@@ -356,13 +356,14 @@ out of backups.
 
 `/usr/local/bin/ha-claude-jobs-mcp` is an MCP server over standard input
 and output, for the chat's Claude Code inside the add-on only: it serves no
-network, and runs as the Claude user, as the chat does. It has three tools:
+network, and runs as the Claude user, as the chat does. It has four tools:
 
 | Tool | Input | What it does |
 |---|---|---|
 | `job_list` | none | Every job file in `/data/jobs/` (not `ended/`): its name, whether it is from the repo, `agent`, `schedule`, `enabled`, `end`, its `description` or the first 200 characters of its `task`, and its result file |
 | `job_set` | `name`, `job` (the whole file, an object) | Checks the job with `ha-claude-job-check` and writes it whole, to `<name>.json.new` and then in its place. A new chat job has `created` today, one that is there keeps its own; the 10 enabled jobs are counted again under a lock just before the write. For a file from the working folder, only `schedule`, `enabled` and `task` may differ from the file in place, and only when it has `run_by` `jobs` |
 | `job_run_now` | `name` | For a chat's job that is there and valid, not a file from the working folder: writes an empty request `/data/jobs/.requests/<name>` for the add-on |
+| `job_status` | `name` | How the job is doing, as one JSON object: `status` (`idle`, `running`, `ok`, `failed`, `timeout`, `invalid`, or `unknown` when there is no public copy), `queued` (true while its request file is there), `last_run`, `last_end` and `next_run` in local time with the offset, `error`, and `request`, the outcome of the last request the add-on read (`at`, `outcome` `started`, `dropped` or `failed`, and `reason`). It reads the public copy below and never the job state; it holds no finding |
 
 A refusal is one line, `<word>: <field>`, the word as the check's above, or
 `created`, `differs`, `run_by`, `repo`, `missing` or `busy`; never the file.
@@ -381,6 +382,38 @@ running already, only while Home Assistant can see the jobs, and within
 entities, as a tick's does. Anything else (a file from the working folder,
 a name with no valid file) is dropped, and the log says why.
 
+Each request's outcome is kept in the job's state as `request`: `started`;
+`failed` with the word the start set (such as `agent`); or `dropped` with
+`repo`, `running`, `ended`, `off`, `limit`, `invalid`, `no-broker` or
+`parallel`. A drop is kept only for a job that has a state already (each
+tick makes one), so a name with no file is only logged. The state's own
+`error` is not changed by a request.
+
+The add-on keeps a public copy of each job's state for `job_status`, in
+`/data/status/jobs/<name>.json`, root's and readable by the Claude user:
+`status`, `error`, `last_run`, `last_end`, `next_run` (epochs) and
+`request`, never the finding, its text or anything a run wrote. It is
+written whole with each change of the state and at every start, and
+removed with the state.
+
+### The documents tool
+
+`/usr/local/bin/ha-claude-docs-mcp` is an MCP server over standard input
+and output with one tool, `read_document`, for the chat's Claude Code
+inside the add-on: the text of a document the owner uploaded in the chat.
+Its input is `path`, an absolute path under `/data/home/.claude/uploads/`,
+where an upload lands. It reads `.docx` (the body, footnotes and endnotes),
+`.xlsx` (each sheet by its name, cells by tabs), `.pptx` (each slide),
+`.odt`, `.ods`, `.odp` with Node's own modules, and `.pdf` through
+`pdftotext`. It follows no link, writes nothing, reads a file of at most
+32 MB and at most 64 MB unpacked, and gives back at most 200000
+characters. An office file is parsed in a child process with 30 seconds;
+a PDF has 60. A refusal is one line, `<word>: <field>`: `path`, `outside`,
+`link`, `missing`, `unreadable`, `kind`, `format`, `size`, `slow` or
+`shape`.
+Every call is refused when `HA_CLAUDE_UNATTENDED` or `HA_CLAUDE_JOB` is
+set.
+
 ### The jobs in Home Assistant
 
 The add-on asks the Supervisor for the MQTT broker (the service
@@ -398,7 +431,7 @@ In these IDs and in the entity IDs a `-` in the job's name is written `_`
 
 | Entity | Shows |
 |---|---|
-| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type` (the agent without `job-`: `private`, `web` or `all`), `schedule`, `end`, `task`, `description` (the file's own text, which the view shows when the file has no `task`), `run_by`, `error` and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
+| `sensor.ha_claude_job_<name>_status` | The status; its attributes hold `type` (the agent without `job-`: `private`, `web` or `all`), `schedule`, `end`, `task`, `description` (the file's own text, which the view shows when the file has no `task`), `run_by`, `error` (the state's own, or, when it has none, `dropped: <reason>` or `failed: <reason>` for a request since the last run), `request` (the last request's `at`, `outcome` and `reason`) and `calls`, the last 20 tool calls from `/data/results/jobs/<name>.log.jsonl` (each its tool and its input, at most 200 characters) |
 | `sensor.ha_claude_job_<name>_next_run`, `..._last_run` | Timestamps |
 | `sensor.ha_claude_job_<name>_finding` | The last result's verdict; the attribute `text` holds its text |
 | `binary_sensor.ha_claude_job_<name>_notify` | On when the last good result set `notify` |

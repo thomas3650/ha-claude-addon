@@ -5,7 +5,8 @@
 #   jobs       Claude user (the job files the chat writes), and its .requests
 #              (the chat's requests to run a job now, jobs_requests)
 #   home       Claude user
-#   status     root, readable by the Claude user
+#   status     root, readable by the Claude user; its jobs/ holds each job's
+#              public copy of its state, for the chat's job_status
 #   state, repo, options file   root only (state holds the jobs' own state)
 ensure_layout() {
   mkdir -p "$HC_HOME" "$HC_HANDOVER" "$HC_RESULTS" "$HC_STATE" "$HC_STATUS" "$HC_WORKSPACE" \

@@ -29,12 +29,13 @@ jobs:
         with:
           node-version: 22
 
-      # Every command is bash but the jobs server, which is Node.
+      # Every command is bash but the jobs and documents servers, which are Node.
       - name: Lint
         run: |
           shellcheck -x -s bash ha-claude/rootfs/usr/local/lib/ha-claude/*.sh tests/container.sh \
-            $(ls ha-claude/rootfs/usr/local/bin/* | grep -v '/ha-claude-jobs-mcp$')
+            $(ls ha-claude/rootfs/usr/local/bin/* | grep -v -e '/ha-claude-jobs-mcp$' -e '/ha-claude-docs-mcp$')
           node --check ha-claude/rootfs/usr/local/bin/ha-claude-jobs-mcp
+          node --check ha-claude/rootfs/usr/local/bin/ha-claude-docs-mcp
 
       - name: Unit tests
         run: bats tests/

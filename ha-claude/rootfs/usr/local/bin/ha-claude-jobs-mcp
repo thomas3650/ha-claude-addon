@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 // ha-claude-jobs-mcp - the chat's jobs as tools: an MCP server over standard
-// input and output (JSON-RPC 2.0, one message per line), with three tools:
+// input and output (JSON-RPC 2.0, one message per line), with four tools:
 //
 //   job_list     every job file in the jobs folder, briefly
 //   job_set      checks a job and writes its file whole, in one step
 //   job_run_now  asks the add-on to start a chat's job now
+//   job_status   how a job is doing: queued, its status, times and the
+//                outcome of its last request
 //
 // Only the chat's Claude Code starts it, from the working folder, as the
 // Claude user; it writes in the jobs folder as the chat's Write did. It uses
-// Node's own modules only. It never reads the job state (root's), never
-// deletes a file, and refuses every call when HA_CLAUDE_UNATTENDED or
-// HA_CLAUDE_JOB is set: an unattended run gets none of these tools.
+// Node's own modules only. It never reads the job state (root's): job_status
+// reads the public copy the add-on writes for it under /data/status/jobs/,
+// which holds no finding. It never deletes a file, and refuses every call
+// when HA_CLAUDE_UNATTENDED or HA_CLAUDE_JOB is set: an unattended run gets
+// none of these tools.
 //
 // A refusal is one line, "<word>: <field>", never the file. The check of a
 // job is the add-on's own, ha-claude-job-check.
 //
-// HC_DATA, HC_JOBS, HC_WORKSPACE, HC_RESULTS, HC_JOB_CHECK and HC_LIB are
+// HC_DATA, HC_JOBS, HC_WORKSPACE, HC_RESULTS, HC_JOB_PUBLIC, HC_JOB_CHECK and HC_LIB are
 // for the tests, which run it from the source tree.
 'use strict';
 
@@ -29,6 +33,7 @@ const JOBS = process.env.HC_JOBS || path.join(DATA, 'jobs');
 const WORKSPACE = process.env.HC_WORKSPACE || path.join(DATA, 'workspace/assistant');
 const RESULTS = process.env.HC_RESULTS || path.join(DATA, 'results');
 const CHECK = process.env.HC_JOB_CHECK || path.join(__dirname, 'ha-claude-job-check');
+const PUBLIC = process.env.HC_JOB_PUBLIC || path.join(DATA, 'status/jobs');
 
 const NAME_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const DAY_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
@@ -366,6 +371,58 @@ function jobRunNow(args) {
   return `requested: ${name}`;
 }
 
+const STATUSES = ['idle', 'running', 'ok', 'failed', 'timeout', 'invalid'];
+const OUTCOMES = ['started', 'dropped', 'failed'];
+const WORD_OF = /^[a-z][a-z_-]{0,19}$/;
+
+// An epoch in seconds as ISO 8601 in local time with its offset, or null.
+function localTime(epoch) {
+  if (typeof epoch !== 'number' || !Number.isFinite(epoch) || epoch < 0) return null;
+  const d = new Date(Math.floor(epoch) * 1000);
+  if (Number.isNaN(d.getTime())) return null;
+  const two = (n) => String(n).padStart(2, '0');
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const abs = Math.abs(off);
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}:`
+    + `${two(d.getMinutes())}:${two(d.getSeconds())}${sign}${two(Math.floor(abs / 60))}:${two(abs % 60)}`;
+}
+
+const wordOf = (v) => (typeof v === 'string' && WORD_OF.test(v) ? v : null);
+
+function jobStatus(args) {
+  noOtherKeys(args, ['name']);
+  const name = wantName(args);
+  // The request is waiting while its file is there: the add-on removes it
+  // when it reads it.
+  const queued = lstat(path.join(JOBS, '.requests', name)) !== null;
+  let copy = null;
+  const text = readSmall(path.join(PUBLIC, `${name}.json`));
+  if (text !== null) {
+    try { copy = JSON.parse(text); } catch { copy = null; }
+  }
+  if (!isObject(copy)) {
+    return JSON.stringify({
+      name, status: 'unknown', queued, last_run: null, last_end: null, next_run: null, error: null, request: null,
+    });
+  }
+  const r = isObject(copy.request) ? copy.request : null;
+  return JSON.stringify({
+    name,
+    status: STATUSES.includes(copy.status) ? copy.status : 'unknown',
+    queued,
+    last_run: localTime(copy.last_run),
+    last_end: localTime(copy.last_end),
+    next_run: localTime(copy.next_run),
+    error: wordOf(copy.error),
+    request: r === null ? null : {
+      at: localTime(r.at),
+      outcome: OUTCOMES.includes(r.outcome) ? r.outcome : null,
+      reason: wordOf(r.reason),
+    },
+  });
+}
+
 const NAME_SCHEMA = { type: 'string', pattern: NAME_RE.source };
 const TOOLS = [
   {
@@ -400,6 +457,21 @@ const TOOLS = [
       additionalProperties: false,
     },
     run: jobRunNow,
+  },
+  {
+    name: 'job_status',
+    description: 'How a job is doing, a chat\'s job or a file from the repo: one JSON object with status (idle, '
+      + 'running, ok, failed, timeout, invalid, or unknown when the add-on has written nothing for it), queued '
+      + '(true while a job_run_now request waits for the add-on), last_run, last_end and next_run (local time), '
+      + 'error, and request: the outcome of the last request the add-on read (started, dropped or failed, with '
+      + 'its reason). It never holds what the job found: read its result file for that.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: NAME_SCHEMA },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    run: jobStatus,
   },
 ];
 

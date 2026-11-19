@@ -604,3 +604,28 @@ notifies() { grep -c ha_claude_job_notify "$SENT/args" 2>/dev/null || true; }
   tmpl="$(msg homeassistant/sensor/ha_claude_job_alpha_run_status/config | jq -r .json_attributes_template)"
   [[ "$tmpl" == *"value_json.description"* ]]
 }
+
+@test "a dropped request shows in the status's error until the next run, and request is an attribute" {
+  load_mqtt
+  mqtt_config
+  job_file price
+  _job_update price '.status = "ok" | .error = null | .last_run = 100 | .request = {at: 200, outcome: "dropped", reason: "parallel"}'
+  mqtt_publish_job price
+  state="$(msg ha_claude/jobs/price/state)"
+  [ "$(jq -r .status <<<"$state")" = ok ]
+  [ "$(jq -r .error <<<"$state")" = "dropped: parallel" ]
+  [ "$(jq -r .request.outcome <<<"$state")" = dropped ]
+  [ "$(jq -r .request.at <<<"$state")" = "1970-01-01T00:03:20Z" ]
+  msg homeassistant/sensor/ha_claude_job_price_status/config | jq -r .json_attributes_template | grep -qF '"request": value_json.request'
+  # The next run clears it; the state's own error wins.
+  _job_update price '.last_run = 300'
+  mqtt_publish_job price
+  [ "$(msg ha_claude/jobs/price/state | jq -r .error)" = null ]
+  _job_update price '.last_run = 100 | .error = "agent"'
+  mqtt_publish_job price
+  [ "$(msg ha_claude/jobs/price/state | jq -r .error)" = agent ]
+  # A started request shows nothing in error.
+  _job_update price '.error = null | .request.outcome = "started" | .request.reason = null'
+  mqtt_publish_job price
+  [ "$(msg ha_claude/jobs/price/state | jq -r .error)" = null ]
+}
