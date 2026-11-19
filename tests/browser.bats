@@ -29,7 +29,7 @@ stub() {
   [ "$status" -eq 0 ]
   [ "$(head -n 1 "$BATS_TEST_TMPDIR/args")" = /usr/share/ha-claude/browsers ]
   args="$(tail -n +2 "$BATS_TEST_TMPDIR/args")"
-  for f in --browser chromium --headless --isolated --sandbox --no-webmcp --snapshot-mode none --image-responses omit; do
+  for f in --browser chromium --executable-path /usr/share/ha-claude/browsers/chrome-headless-shell --headless --isolated --sandbox --no-webmcp --snapshot-mode none --image-responses omit; do
     grep -qxF -- "$f" <<<"$args" || { echo "no $f"; false; }
   done
   ! grep -qx -- --no-sandbox <<<"$args"
@@ -72,4 +72,5 @@ stub() {
   grep -qE '^ARG PLAYWRIGHT_MCP_VERSION=[0-9]+\.[0-9]+\.[0-9]+$' "$D"
   grep -qF 'playwright-mcp install-browser --with-deps --only-shell chromium' "$D"
   grep -qF 'ENV PLAYWRIGHT_BROWSERS_PATH=/usr/share/ha-claude/browsers' "$D"
+  grep -qF 'ln -s "$shell" "$PLAYWRIGHT_BROWSERS_PATH/chrome-headless-shell"' "$D"
 }

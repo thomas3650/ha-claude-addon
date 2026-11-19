@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ha-claude-browser-mcp - the browser for the chat and the Web jobs:
 # Microsoft's Playwright MCP over standard input and output, with the
-# image's own headless Chromium. The flags are fixed here, not by the
+# image's own headless Chromium (the headless shell the image links at a
+# fixed path; the full browser is not in the image). The flags are fixed here, not by the
 # caller: Chromium's sandbox on, a new profile in memory for each session
 # (no cookies, no logins kept), no tools a page offers itself, no snapshot
 # written to a file after a page opens, no images in answers, and no other
@@ -22,7 +23,8 @@ mkdir -p -- "$out" 2>/dev/null || out="$(mktemp -d)"
 exec env -i HOME="$home" LANG=C.UTF-8 TZ="${TZ:-UTC}" PATH=/usr/local/bin:/usr/bin:/bin \
   PLAYWRIGHT_BROWSERS_PATH=/usr/share/ha-claude/browsers \
   /usr/local/bin/playwright-mcp \
-  --browser chromium --headless --isolated --sandbox --no-webmcp \
+  --browser chromium --executable-path /usr/share/ha-claude/browsers/chrome-headless-shell \
+  --headless --isolated --sandbox --no-webmcp \
   --snapshot-mode none --image-responses omit \
   --output-dir "$out" --output-max-size 1048576 \
   --timeout-navigation 30000

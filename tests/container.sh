@@ -89,7 +89,8 @@ docker exec "$name" pdftotext -v >/dev/null 2>&1 || fail "pdftotext is missing"
 # The browser reads a page built with JavaScript, as the Claude user, with
 # Chromium's sandbox on: the price is only on the page once its script ran.
 page="data:text/html,<div id=p></div><script>document.getElementById('p').textContent='Pris: '+(400+99)+' kr'</script>"
-first="$(printf '%s\n' "$init" '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+full_init='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"container-test","version":"1"}}}'
+first="$(printf '%s\n' "$full_init" '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   "$(jq -cn --arg u "$page" '{jsonrpc: "2.0", id: 2, method: "tools/call", params: {name: "browser_navigate", arguments: {url: $u}}}')")"
 then_find='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"browser_find","arguments":{"text":"Pris"}}}'
 answer="$( { printf '%s\n' "$first"; sleep 15; printf '%s\n' "$then_find"; sleep 10; } \
@@ -97,6 +98,7 @@ answer="$( { printf '%s\n' "$first"; sleep 15; printf '%s\n' "$then_find"; sleep
   || true
 grep -q 'Pris: 499 kr' <<<"$answer" || fail "the browser did not read a page built with JavaScript: $answer"
 docker exec "$name" ha-claude-browser-mcp </dev/null >/dev/null 2>&1 && fail "the browser started as root"
+docker exec "$name" test -x /usr/share/ha-claude/browsers/chrome-headless-shell || fail "the headless shell is not linked"
 for d in /usr/share/ha-claude/browsers /usr/local/lib/node_modules/@playwright; do
   [ "$(docker exec "$name" stat -c %U "$d")" = root ] || fail "$d is not root's"
   docker exec "$name" runuser -u claude -- test -w "$d" && fail "$d is writable by claude"

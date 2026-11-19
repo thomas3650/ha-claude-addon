@@ -419,7 +419,9 @@ set.
 `/usr/local/bin/ha-claude-browser-mcp` starts Microsoft's Playwright MCP
 (`@playwright/mcp`, pinned by `PLAYWRIGHT_MCP_VERSION` in the Dockerfile
 and moved by hand with a release) over standard input and output, with the
-image's headless Chromium in `/usr/share/ha-claude/browsers`. Its flags are
+image's headless Chromium in `/usr/share/ha-claude/browsers` (the headless
+shell only, linked at `chrome-headless-shell` there and named by
+`--executable-path`). Its flags are
 fixed by the wrapper, which starts the server in a clean environment, so
 neither arguments nor variables of the caller reach it:
 Chromium's sandbox on (`--sandbox`), a new profile in memory for each

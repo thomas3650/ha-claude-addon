@@ -32,6 +32,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/usr/share/ha-claude/browsers
 RUN npm install -g "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" \
  && apt-get update \
  && playwright-mcp install-browser --with-deps --only-shell chromium \
+ && shell="$(find "$PLAYWRIGHT_BROWSERS_PATH" -path '*chromium_headless_shell-*' -type f -name chrome-headless-shell | head -n 1)" \
+ && [ -x "$shell" ] && ln -s "$shell" "$PLAYWRIGHT_BROWSERS_PATH/chrome-headless-shell" \
  && rm -rf /var/lib/apt/lists/* \
  && npm cache clean --force \
  && chown -R root:root "$PLAYWRIGHT_BROWSERS_PATH" /usr/local/lib/node_modules/@playwright \
