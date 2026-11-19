@@ -1,7 +1,8 @@
 load helpers
 
-# A fixed run's start, end and finding are its job's state. The agents are
-# made up: alpha-run and beta-run. The runner itself is in runner.bats.
+# A fixed run's start, end and finding are its job's state; the run command
+# sends a fixed name to the job runner. The agents are made up: alpha-run
+# and beta-run. The runner itself is in runner.bats.
 
 setup_file() {
   export TZ=Europe/Copenhagen
@@ -32,13 +33,6 @@ state() {
   jq -r "$2" "$HC_JOB_STATE/$1.json"
 }
 
-# body <verdict-json> - a result body as publish_result keeps it.
-body() {
-  sleep 1
-  ( umask 077; jq -nc --argjson v "$1" '{agent: "x", count: 1, verdict: $v, text: "line one\nline two", time: "t"}' \
-      > "$HC_STATE/fixed-alpha-run.body" )
-}
-
 # wait_runs - waits until every runner has ended, its last step included.
 wait_runs() {
   local pidfile pid
@@ -48,53 +42,6 @@ wait_runs() {
     while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
   done
   return 0
-}
-
-@test "fixed_run_begin and fixed_run_end: running during the run, ok after, with the finding and the text" {
-  fixed_run_setup
-  fixed_run_begin alpha-run
-  [ "$(state alpha-run .status)" = running ]
-  body '"2 things"'
-  fixed_run_end alpha-run ok
-  [ "$(state alpha-run .status)" = ok ]
-  [ "$(state alpha-run .error)" = null ]
-  [ "$(state alpha-run .finding)" = "2 things" ]
-  [ "$(state alpha-run .text)" = $'line one\nline two' ]
-  [[ "$(state alpha-run .last_run)" =~ ^[0-9]+$ ]]
-  [ "$(state alpha-run .last_end)" -ge "$(state alpha-run .last_run)" ]
-  (( $(state alpha-run .next_run) > $(state alpha-run .last_run) ))
-  grep -qx alpha-run "$CHANGES"
-}
-
-@test "failed, timeout and not_configured end the state, and keep the last finding" {
-  fixed_run_setup
-  fixed_run_begin alpha-run; body '"first"'; fixed_run_end alpha-run ok
-  [ "$(state alpha-run .finding)" = first ]
-  local o want err
-  for o in failed timeout not_configured; do
-    fixed_run_begin alpha-run
-    fixed_run_end alpha-run "$o"
-    want="$o"; err=null
-    [[ "$o" == not_configured ]] && { want=failed; err=not_configured; }
-    [ "$(state alpha-run .status)" = "$want" ]
-    [ "$(state alpha-run .error)" = "$err" ]
-    [ "$(state alpha-run .finding)" = first ]
-    [[ "$(state alpha-run .next_run)" =~ ^[0-9]+$ ]]
-  done
-}
-
-@test "a body left from an earlier run is not this run's finding; a fresh one without a verdict empties it" {
-  fixed_run_setup
-  fixed_run_begin alpha-run; body '"old"'; fixed_run_end alpha-run ok
-  [ "$(state alpha-run .finding)" = old ]
-  jq -nc '{agent: "x", count: 1, verdict: "stale", text: "s", time: "t"}' > "$HC_STATE/fixed-alpha-run.body"
-  touch -t 202001010000 "$HC_STATE/fixed-alpha-run.body"
-  fixed_run_begin alpha-run
-  fixed_run_end alpha-run ok
-  [ "$(state alpha-run .finding)" = old ]
-  fixed_run_begin alpha-run; body 5; fixed_run_end alpha-run ok
-  [ "$(state alpha-run .status)" = ok ]
-  [ "$(state alpha-run .finding)" = null ]
 }
 
 @test "a run of an agent with no fixed file changes no job state" {
@@ -107,16 +54,21 @@ wait_runs() {
   grep -qx 'outcome run ok gamma-run command' "$CALLS"
 }
 
-@test "a fixed run is not counted as a running job" {
+# running <name> - the state a running fixed job has, without a runner.
+running() {
+  _job_update "$1" '.status = "running" | .error = null | .last_run = $now' --argjson now "$(date +%s)"
+}
+
+@test "a fixed job whose state says running, without a runner, is not counted as a running job" {
   fixed_run_setup
-  fixed_run_begin alpha-run
+  running alpha-run
   [ "$(state alpha-run .status)" = running ]
   [ -z "$(jobs_running)" ]
 }
 
 @test "after a restart a fixed job left running is failed" {
   fixed_run_setup
-  fixed_run_begin alpha-run
+  running alpha-run
   [ "$(state alpha-run .status)" = running ]
   jobs_startup
   [ "$(state alpha-run .status)" = failed ]

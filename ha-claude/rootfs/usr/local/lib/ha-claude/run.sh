@@ -31,7 +31,7 @@ run_configured() {
 # only root can read, not to the log.
 run_agent() {
   local _ra_agent="${2:-}" _ra_today _ra_limit _ra_turns _ra_log _ra_rc=0 _ra_started=$SECONDS
-  local _ra_marker="$HC_STATE/run-${2:-}.started" _ra_job=()
+  local _ra_marker="$HC_STATE/run-${2:-}.started"
   if ! run_configured "$_ra_agent"; then
     printf -v "$1" '%s' not_configured
     return 0
@@ -46,12 +46,8 @@ run_agent() {
   : > "$_ra_marker"
   rm -f "$_ra_log"
   ( umask 077; : > "$_ra_log" )
-  # A fixed run whose tool calls the policy asks to mark carries its job's name.
-  if declare -F fixed_marked >/dev/null && fixed_marked "$_ra_agent"; then
-    _ra_job=(HA_CLAUDE_JOB="$_ra_agent")
-  fi
   ( cd "$HC_WORKSPACE" && as_claude env CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 \
-      HA_CLAUDE_UNATTENDED="$_ra_agent" ${_ra_job[@]+"${_ra_job[@]}"} \
+      HA_CLAUDE_UNATTENDED="$_ra_agent" \
       "$HC_LIMIT_BIN" "$_ra_limit" "$HC_CLAUDE_BIN" \
       -p "Today is $_ra_today. Your result file is $HC_RESULTS/$_ra_agent.json. Do your run." \
       --agent "$_ra_agent" --max-turns "$_ra_turns" --permission-mode default \
