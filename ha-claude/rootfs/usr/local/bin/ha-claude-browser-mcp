@@ -5,19 +5,23 @@
 # caller: Chromium's sandbox on, a new profile in memory for each session
 # (no cookies, no logins kept), no tools a page offers itself, no snapshot
 # written to a file after a page opens, no images in answers, and no other
-# capability. Which of its tools may be used is the working folder's gate.
+# capability. It starts in a clean environment, so neither arguments nor
+# variables of the caller (PLAYWRIGHT_MCP_*, NODE_OPTIONS, PATH) reach the
+# server. Which of its tools may be used is the working folder's own rules.
 #
-# It opens any public page it is sent to; a page's redirect or its own
-# requests are not filtered here (the house's record on the browser).
+# It filters no address: a page's redirect or its own requests go wherever
+# they point.
 set -u
 if [[ "$(id -u)" == 0 ]]; then
   echo "ha-claude-browser-mcp: not as root; Chromium's sandbox needs another user" >&2
   exit 1
 fi
-export PLAYWRIGHT_BROWSERS_PATH="${HC_BROWSERS:-/usr/share/ha-claude/browsers}"
-out="${HOME:-/data/home}/.cache/ha-claude/browser"
+home="${HOME:-/data/home}"
+out="$home/.cache/ha-claude/browser"
 mkdir -p -- "$out" 2>/dev/null || out="$(mktemp -d)"
-exec "${HC_PLAYWRIGHT_MCP:-/usr/local/bin/playwright-mcp}" \
+exec env -i HOME="$home" LANG=C.UTF-8 TZ="${TZ:-UTC}" PATH=/usr/local/bin:/usr/bin:/bin \
+  PLAYWRIGHT_BROWSERS_PATH=/usr/share/ha-claude/browsers \
+  /usr/local/bin/playwright-mcp \
   --browser chromium --headless --isolated --sandbox --no-webmcp \
   --snapshot-mode none --image-responses omit \
   --output-dir "$out" --output-max-size 1048576 \

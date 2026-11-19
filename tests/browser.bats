@@ -5,10 +5,16 @@ load helpers
 
 W="$BATS_TEST_DIRNAME/../ha-claude/rootfs/usr/local/bin/ha-claude-browser-mcp"
 
+# stub - a stand-in server that writes down its environment and arguments,
+# and W2, a copy of the wrapper that starts it in place of the real one.
 stub() {
   STUB="$BATS_TEST_TMPDIR/playwright-mcp"
-  printf '#!/bin/sh\nprintf "%%s\\n" "$PLAYWRIGHT_BROWSERS_PATH" "$@" > "%s/args"\n' "$BATS_TEST_TMPDIR" > "$STUB"
+  printf '#!/bin/sh\nenv > "%s/env"\nprintf "%%s\\n" "$PLAYWRIGHT_BROWSERS_PATH" "$@" > "%s/args"\n' \
+    "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" > "$STUB"
   chmod +x "$STUB"
+  W2="$BATS_TEST_TMPDIR/wrapper"
+  sed "s#/usr/local/bin/playwright-mcp#$STUB#" "$W" > "$W2"
+  chmod +x "$W2"
 }
 
 @test "the wrapper is executable in git and passes shellcheck" {
@@ -19,7 +25,7 @@ stub() {
 @test "it starts the server with the sandbox on, a profile in memory, no page tools, no snapshot files and no images" {
   [ "$(id -u)" -ne 0 ] || skip "the wrapper refuses root; runs as another user in CI"
   stub
-  HOME="$BATS_TEST_TMPDIR/home" HC_PLAYWRIGHT_MCP="$STUB" run "$W"
+  HOME="$BATS_TEST_TMPDIR/home" run "$W2"
   [ "$status" -eq 0 ]
   [ "$(head -n 1 "$BATS_TEST_TMPDIR/args")" = /usr/share/ha-claude/browsers ]
   args="$(tail -n +2 "$BATS_TEST_TMPDIR/args")"
@@ -34,17 +40,29 @@ stub() {
 @test "arguments given to it are not passed on" {
   [ "$(id -u)" -ne 0 ] || skip "the wrapper refuses root; runs as another user in CI"
   stub
-  HOME="$BATS_TEST_TMPDIR/home" HC_PLAYWRIGHT_MCP="$STUB" run "$W" --no-sandbox --caps devtools --user-data-dir /x
+  HOME="$BATS_TEST_TMPDIR/home" run "$W2" --no-sandbox --caps devtools --user-data-dir /x
   [ "$status" -eq 0 ]
   ! grep -qx -- --no-sandbox "$BATS_TEST_TMPDIR/args"
   ! grep -q -- devtools "$BATS_TEST_TMPDIR/args"
   ! grep -q -- --user-data-dir "$BATS_TEST_TMPDIR/args"
 }
 
+@test "the caller's environment does not reach the server, nor a browsers folder of its own" {
+  [ "$(id -u)" -ne 0 ] || skip "the wrapper refuses root; runs as another user in CI"
+  stub
+  HOME="$BATS_TEST_TMPDIR/home" PLAYWRIGHT_MCP_CONFIG=/x PLAYWRIGHT_MCP_CDP_ENDPOINT=ws://x NODE_OPTIONS=--require=/x \
+    PLAYWRIGHT_BROWSERS_PATH=/elsewhere PATH="/elsewhere:$PATH" run "$W2"
+  [ "$status" -eq 0 ]
+  ! grep -q '^PLAYWRIGHT_MCP_' "$BATS_TEST_TMPDIR/env"
+  ! grep -q '^NODE_OPTIONS=' "$BATS_TEST_TMPDIR/env"
+  grep -qx 'PATH=/usr/local/bin:/usr/bin:/bin' "$BATS_TEST_TMPDIR/env"
+  grep -qx 'PLAYWRIGHT_BROWSERS_PATH=/usr/share/ha-claude/browsers' "$BATS_TEST_TMPDIR/env"
+}
+
 @test "as root it refuses to start" {
   [ "$(id -u)" -eq 0 ] || skip "needs root"
   stub
-  HC_PLAYWRIGHT_MCP="$STUB" run "$W"
+  run "$W2"
   [ "$status" -eq 1 ]
   [ ! -e "$BATS_TEST_TMPDIR/args" ]
 }

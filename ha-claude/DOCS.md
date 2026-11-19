@@ -420,11 +420,15 @@ set.
 (`@playwright/mcp`, pinned by `PLAYWRIGHT_MCP_VERSION` in the Dockerfile
 and moved by hand with a release) over standard input and output, with the
 image's headless Chromium in `/usr/share/ha-claude/browsers`. Its flags are
-fixed by the wrapper and arguments given to it are not passed on:
+fixed by the wrapper, which starts the server in a clean environment, so
+neither arguments nor variables of the caller reach it:
 Chromium's sandbox on (`--sandbox`), a new profile in memory for each
 session (`--isolated`: no cookies, no logins kept), no tools a page offers
 itself (`--no-webmcp`), no snapshot written to a file after a page opens
-(`--snapshot-mode none`), no images in answers, and no extra capability.
+(`--snapshot-mode none`), no images in answers, and no extra capability;
+its output folder is `~/.cache/ha-claude/browser`, which nothing it may be
+asked writes to. The browser and the server are root's and no one else can
+write them.
 It refuses to start as root, as the sandbox needs another user. Each
 session that uses it starts its own Chromium, on its first call, and ends
 it with the session. Which of its tools may be used is the working

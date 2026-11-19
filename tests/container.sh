@@ -97,6 +97,11 @@ answer="$( { printf '%s\n' "$first"; sleep 15; printf '%s\n' "$then_find"; sleep
   || true
 grep -q 'Pris: 499 kr' <<<"$answer" || fail "the browser did not read a page built with JavaScript: $answer"
 docker exec "$name" ha-claude-browser-mcp </dev/null >/dev/null 2>&1 && fail "the browser started as root"
+for d in /usr/share/ha-claude/browsers /usr/local/lib/node_modules/@playwright; do
+  [ "$(docker exec "$name" stat -c %U "$d")" = root ] || fail "$d is not root's"
+  docker exec "$name" runuser -u claude -- test -w "$d" && fail "$d is writable by claude"
+  [ -z "$(docker exec "$name" find "$d" -perm /022 -not -type l | head -n 1)" ] || fail "something in $d is writable by others"
+done
 # The jobs' public copies can be read by the Claude user and not written.
 docker exec "$name" runuser -u claude -- test -r /data/status || fail "status is not readable by claude"
 docker exec "$name" runuser -u claude -- touch /data/status/x 2>/dev/null && fail "status is writable by claude"

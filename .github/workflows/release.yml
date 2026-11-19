@@ -63,7 +63,8 @@ jobs:
             --build-arg BUILD_VERSION=${{ needs.release-please.outputs.version }} \
             --build-arg BUILD_ARCH=${{ matrix.ha_arch }} ha-claude
           # As in CI: Chromium's sandbox needs unprivileged user namespaces.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+            || echo "::warning::could not allow unprivileged user namespaces; the browser's sandbox may not start"
           tests/container.sh "$IMAGE"
           docker push "$IMAGE"
 

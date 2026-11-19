@@ -47,7 +47,8 @@ jobs:
       # sandbox needs; Home Assistant OS does not, so the runner is made alike.
       - name: Container smoke test
         run: |
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+            || echo "::warning::could not allow unprivileged user namespaces; the browser's sandbox may not start"
           tests/container.sh ha-claude:ci
 
       - name: Root-only unit tests inside the image
