@@ -151,7 +151,7 @@ publish_result() {
     return 1
   fi
   # The finding of a run of a file from the repo is read from this body
-  # afterwards (the runner, fixed_run_end): kept for root alone, before the
+  # afterwards (the runner, _job_finish_repo): kept for root alone, before the
   # body is removed, whether or not Home Assistant is told. Failing to keep
   # it does not change the result. Another agent's run has no finding to keep.
   if declare -F fixed_is >/dev/null && fixed_is "$agent"; then

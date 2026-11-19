@@ -199,9 +199,10 @@ A name is a lowercase letter followed by at most 31 lowercase letters,
 digits or `-`. The chat's own agent, `chat`, is refused: it has the tools of
 a session somebody is watching.
 
-The run is told today's date and the path of its result file, and nothing
-else. Its environment holds `HA_CLAUDE_UNATTENDED` with the agent's name,
-as every run without a terminal does, so a hook in the working folder can
+The run is told, on standard input as a job is, today's date and the path
+of its result file, and nothing else. Its environment holds
+`HA_CLAUDE_UNATTENDED` with the agent's name, as every run without a
+terminal does, so a hook in the working folder can
 tell a run nobody is watching from the chat session. The chat session never
 has that variable.
 

@@ -154,9 +154,7 @@ handle_command() {
         return 0
       fi
       local outcome=failed
-      declare -F fixed_run_begin >/dev/null && fixed_run_begin "$arg"
       run_agent outcome "$arg"
-      declare -F fixed_run_end >/dev/null && fixed_run_end "$arg" "$outcome"
       if run_name_ok "$arg"; then
         raise_outcome run "$outcome" "$arg" command
       else

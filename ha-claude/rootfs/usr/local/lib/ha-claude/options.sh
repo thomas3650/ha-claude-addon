@@ -18,3 +18,12 @@ opt_bool() {
   fi
   printf '%s' "${value:-$2}"
 }
+
+# opt_number <jq-path> <default> - print a whole number option, or the
+# default when the option is missing or not a whole number.
+opt_number() {
+  local value
+  value="$(opt "$1" "$2")"
+  [[ "$value" =~ ^[0-9]+$ ]] || value="$2"
+  printf '%s' "$value"
+}

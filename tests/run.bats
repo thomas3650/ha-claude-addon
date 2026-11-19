@@ -14,6 +14,7 @@ stub_claude() {
 here="$(dirname "$0")"
 { read -r mode; read -r file; } < "$here/mode"
 printf '%s\n' "$@" > "$here/argv"
+cat > "$here/stdin"
 env > "$here/env"
 pwd -P > "$here/cwd"
 echo "stand-in output"
@@ -91,7 +92,11 @@ EOT
   stub_claude write
   run_agent got house-check
   args="$(cat "$STUB/argv")"
-  [[ "$args" == *$'-p\n'"Today is $TODAY. Your result file is $RESULT. Do your run."* ]]
+  # The first message on standard input, as a job's, and on no command line.
+  [[ "$args" == *$'-p\n--agent'* ]]
+  [ "$(cat "$STUB/stdin")" = "Today is $TODAY. Your result file is $RESULT. Do your run." ]
+  [[ "$args" != *"Today is"* ]]
+  [ ! -e "$HC_STATE/run-house-check.prompt" ]
   [[ "$args" == *$'--agent\nhouse-check'* ]]
   [[ "$args" == *$'--max-turns\n60'* ]]
   [[ "$args" == *"--no-session-persistence"* ]]

@@ -228,6 +228,19 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   [ "$(state beta-run .status)" = failed ]
 }
 
+@test "a repo run's marker is gone before its outcome is raised, so a run the outcome starts keeps its own" {
+  runner_setup
+  repo_job alpha-run
+  raise_outcome() {
+    if [[ -e "$HC_JOB_STATE/alpha-run.started" ]]; then echo "outcome with marker" >> "$CALLS"; fi
+    echo "outcome $*" >> "$CALLS"
+  }
+  jobs_tick
+  wait_runs
+  grep -qx 'outcome run ok alpha-run jobs' "$CALLS"
+  ! grep -q 'outcome with marker' "$CALLS"
+}
+
 @test "the outcome is morning for the file morning_job names and run otherwise, with by" {
   runner_setup
   set_options '{"morning_job": "beta-run", "morning_chat": false}'
@@ -385,13 +398,13 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   [ "$(cat "$CALLS")" = "outcome run failed beta-run command" ]
 }
 
-@test "run of an agent with no job file is the run command as before" {
+@test "run of an agent with no job file is the run command, with the job runs' first line" {
   runner_setup
   touch "$HC_WORKSPACE/.claude/agents/gamma-run.md"
   handle_command '"run gamma-run"'
   grep -qx 'outcome run ok gamma-run command' "$CALLS"
   [ -z "$(ls "$HC_JOB_STATE"/*.json 2>/dev/null)" ]
-  [[ "$(cat "$STUB/gamma-run.argv")" == *"Today is $TODAY. Your result file is $HC_RESULTS/gamma-run.json. Do your run."* ]]
+  [ "$(cat "$STUB/gamma-run.stdin")" = "Today is $TODAY. Your result file is $HC_RESULTS/gamma-run.json. Do your run." ]
 }
 
 @test "repo runs start with every place taken by chat jobs, and without a broker" {

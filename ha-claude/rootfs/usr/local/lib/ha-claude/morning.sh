@@ -1,16 +1,7 @@
 # What the add-on gives the runs of the job files beyond the runner itself
-# (jobs.sh): the options' numbers, the Jobs line a run's context may ask
-# for, and the chat's opening after a run whose file asks for the chat to be
-# cleared. Nothing here names an agent.
-
-# Prints a whole number option, or the default when it is missing or not a
-# whole number.
-_morning_number() {
-  local value
-  value="$(opt "$1" "$2")"
-  [[ "$value" =~ ^[0-9]+$ ]] || value="$2"
-  printf '%s' "$value"
-}
+# (jobs.sh): the Jobs line a run's context may ask for, and the chat's
+# opening after a run whose file asks for the chat to be cleared. Nothing
+# here names an agent.
 
 # _morning_jobs - prints one line naming the jobs that have a result file,
 # "Jobs: a, b (old)", or nothing when none has. A result is old when it is
@@ -24,7 +15,7 @@ _morning_jobs() {
   declare -F job_list >/dev/null || return 0
   while read -r name; do
     # A fixed job's result is its own agent's, not the chat's to tell of.
-    declare -F fixed_is >/dev/null && fixed_is "$name" && continue
+    job_from_repo "$name" && continue
     file="$HC_JOB_RESULTS/$name.json"
     [[ -f "$file" ]] || continue
     mtime="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || continue
