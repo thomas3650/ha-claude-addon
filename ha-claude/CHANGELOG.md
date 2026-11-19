@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.0.0...v1.1.0) (2026-11-19)
+
+
+### Features
+
+* the chat's job tools, an MCP server in the add-on ([#64](https://github.com/thomas3650/ha-claude-addon/issues/64)) ([5176b73](https://github.com/thomas3650/ha-claude-addon/commit/5176b7333fa80d0ce06e8b55d2338fee04513583))
+
 ## [1.0.0](https://github.com/thomas3650/ha-claude-addon/compare/v0.17.0...v1.0.0) (2026-11-18)
 
 
