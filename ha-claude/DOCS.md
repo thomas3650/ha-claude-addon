@@ -352,6 +352,35 @@ to true), and for a fixed job `missed` (the last time raised as missed).
 What Claude printed is kept in `/data/state/job-<name>.log`, left
 out of backups.
 
+### The job tools
+
+`/usr/local/bin/ha-claude-jobs-mcp` is an MCP server over standard input
+and output, for the chat's Claude Code inside the add-on only: it serves no
+network, and runs as the Claude user, as the chat does. It has three tools:
+
+| Tool | Input | What it does |
+|---|---|---|
+| `job_list` | none | Every job file in `/data/jobs/` (not `ended/`): its name, whether it is from the repo, `agent`, `schedule`, `enabled`, `end`, its `description` or the first 200 characters of its `task`, and its result file |
+| `job_set` | `name`, `job` (the whole file, an object) | Checks the job with `ha-claude-job-check` and writes it whole, to `<name>.json.new` and then in its place. A new chat job has `created` today, one that is there keeps its own; the 10 enabled jobs are counted again under a lock just before the write. For a file from the working folder, only `schedule`, `enabled` and `task` may differ from the file in place, and only when it has `run_by` `jobs` |
+| `job_run_now` | `name` | For a chat's job that is there and valid, not a file from the working folder: writes an empty request `/data/jobs/.requests/<name>` for the add-on |
+
+A refusal is one line, `<word>: <field>`, the word as the check's above, or
+`created`, `differs`, `run_by`, `repo`, `missing` or `busy`; never the file.
+Every call is refused when `HA_CLAUDE_UNATTENDED` or `HA_CLAUDE_JOB` is set,
+so a job's run cannot use it. No tool deletes a job: a job ends by
+`enabled` false or its `end`.
+
+The command loop reads `/data/jobs/.requests/` (the Claude user's, made at
+start) every five seconds, at most five entries a pass. It removes every
+entry as the Claude user, never as root, and reads only names, never what a
+file holds; a link or a folder is removed and never followed. A plain file
+named by a chat's job starts that job as a tick would: valid and within the
+10 enabled jobs as the tick counts them, enabled, not past its `end`, not
+running already, only while Home Assistant can see the jobs, and within
+`jobs_parallel`; the run sets `last_run` and ends with its result and
+entities, as a tick's does. Anything else (a file from the working folder,
+a name with no valid file) is dropped, and the log says why.
+
 ### The jobs in Home Assistant
 
 The add-on asks the Supervisor for the MQTT broker (the service

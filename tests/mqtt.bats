@@ -252,7 +252,7 @@ msg() { cat "$PUB/$(tr '/' '_' <<<"$1")"; }
   [ "$(jq -r .enabled "$HC_JOBS/price.json")" = true ]
   [ "$(msg ha_claude/jobs/price/state | jq -r .enabled)" = ON ]
   ls -A "$HC_JOBS" > "$BATS_TEST_TMPDIR/left"
-  [ "$(grep -v -x -e price.json -e ended "$BATS_TEST_TMPDIR/left")" = "" ]
+  [ "$(grep -v -x -e price.json -e ended -e .requests "$BATS_TEST_TMPDIR/left")" = "" ]
 }
 
 @test "the switch accepts only ON or OFF, for a job file that exists" {

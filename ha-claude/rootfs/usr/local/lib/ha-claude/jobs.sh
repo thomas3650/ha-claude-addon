@@ -42,7 +42,8 @@ job_read() {
 
 # job_list - prints the names of the job files, one per line, in order. A
 # name that is not a job name is not a job; the folder ended/ holds the jobs
-# that have ended.
+# that have ended, and .requests/ the chat's requests (jobs_requests): both
+# are skipped, as neither is a file named <name>.json.
 job_list() {
   local file name
   [[ -d "$HC_JOBS" ]] || return 0
@@ -950,14 +951,92 @@ _jobs_tick_fixed() {
   fi
 }
 
+# _jobs_parallel - how many runs may be on at once: the option
+# jobs_parallel, 3 when unset, from 1 to 10.
+_jobs_parallel() {
+  local parallel
+  parallel="$(_morning_number '.jobs_parallel' 3)"
+  (( parallel >= 1 )) || parallel=1
+  (( parallel <= 10 )) || parallel=10
+  printf '%s\n' "$parallel"
+}
+
+# _jobs_scan <today> <now> [want] - the tick's pass over the chat's jobs, in
+# their order (_jobs_order): each file read and checked, the enabled ones
+# counted, so the limit refuses the newest. Without want, as the tick: writes
+# each job's state, ends the jobs past their end and sets _JOBS_DUE to the
+# due ones, "<name> <job>" each. With want, for a request (jobs_request):
+# changes no state and ends nothing, and stops at that job, counted as the
+# tick counts it. It sets _JOBS_WANT to ok, with _JOBS_WANT_JOB its normal
+# form, or to why it cannot run: running, ended, unreadable or the check's
+# word; empty when it is not among the jobs read.
+_jobs_scan() {
+  local today="$1" now="$2" want="${3:-}" name state since job last enabled=0
+  local copy="$HC_STATE/job.in"
+  [[ -n "$want" ]] && copy="$HC_STATE/job-request.in"
+  _JOBS_DUE=()
+  _JOBS_WANT=""
+  _JOBS_WANT_JOB=""
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  while read -r name; do
+    state="$(_job_state "$name")"
+    since="$(_job_seen "$name" "$today")"
+    if [[ -z "$want" && "$(jq -r '.status' <<<"$state")" != running ]]; then
+      _job_update "$name" '.first_seen = $d | .status = (.status // "idle")' --arg d "$since"
+      state="$(_job_state "$name")"
+    fi
+    if [[ "$(jq -r '.status' <<<"$state")" == running ]]; then
+      # Its runner owns the state; it still counts against the limit.
+      if job_read "$name" "$copy" && job="$(job_check "$name" "$copy" "$since" "$enabled")" \
+         && [[ "$(jq -r '.enabled' <<<"$job")" == true ]]; then
+        enabled=$((enabled + 1))
+      fi
+      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=running; break; }
+      continue
+    fi
+    # Whatever the file says, a job ends 28 days after the add-on first saw it.
+    last="$(_job_last_day "$since")" || last=""
+    if [[ -n "$last" && "$today" > "$last" ]]; then
+      [[ -z "$want" ]] && _job_end "$name"
+      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=ended; break; }
+      continue
+    fi
+    if ! job_read "$name" "$copy"; then
+      [[ -z "$want" ]] && _job_update "$name" '.status = "invalid" | .error = "unreadable" | .next_run = null'
+      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=unreadable; break; }
+      continue
+    fi
+    if ! job="$(job_check "$name" "$copy" "$since" "$enabled")"; then
+      [[ -z "$want" ]] && _job_update "$name" '.status = "invalid" | .error = $w | .next_run = null' --arg w "$job"
+      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT="$job"; break; }
+      continue
+    fi
+    [[ "$(jq -r '.enabled' <<<"$job")" == true ]] && enabled=$((enabled + 1))
+    if [[ "$today" > "$(jq -r '.end' <<<"$job")" ]]; then
+      [[ -z "$want" ]] && _job_end "$name"
+      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=ended; break; }
+      continue
+    fi
+    if [[ -n "$want" ]]; then
+      [[ "$name" == "$want" ]] && { _JOBS_WANT=ok; _JOBS_WANT_JOB="$job"; break; }
+      continue
+    fi
+    _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
+      | .error = (if .status == "idle" or .status == "ok" then null else .error end)
+      | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
+    job_due "$job" "$state" "$now" && _JOBS_DUE+=("$name $job")
+  done < <(_jobs_order "$today")
+  rm -f -- "$copy"
+  return 0
+}
+
 # jobs_tick - reads the job files, checks them, writes each job's state,
 # ends the jobs past their end, and starts the due ones, at most
 # jobs_parallel at once; the rest wait for a later tick. Returns at once:
 # the runs go on in the background.
 jobs_tick() {
-  local now today name state since job last enabled=0 count parallel entry file
+  local now today name count parallel entry file
   local copy="$HC_STATE/job.in"
-  local -a due=()
   mkdir -p "$HC_JOB_STATE"
   jobs_tick_begin
   now="$(date +%s)"
@@ -982,59 +1061,162 @@ jobs_tick() {
       _jobs_tick_fixed "$name" "$now" "$copy"
     done < <(fixed_list)
   fi
-  # shellcheck disable=SC2016  # jq's variables, not the shell's
-  while read -r name; do
-    state="$(_job_state "$name")"
-    since="$(_job_seen "$name" "$today")"
-    if [[ "$(jq -r '.status' <<<"$state")" != running ]]; then
-      _job_update "$name" '.first_seen = $d | .status = (.status // "idle")' --arg d "$since"
-      state="$(_job_state "$name")"
-    fi
-    if [[ "$(jq -r '.status' <<<"$state")" == running ]]; then
-      # Its runner owns the state; it still counts against the limit.
-      if job_read "$name" "$copy" && job="$(job_check "$name" "$copy" "$since" "$enabled")" \
-         && [[ "$(jq -r '.enabled' <<<"$job")" == true ]]; then
-        enabled=$((enabled + 1))
-      fi
-      continue
-    fi
-    # Whatever the file says, a job ends 28 days after the add-on first saw it.
-    last="$(_job_last_day "$since")" || last=""
-    if [[ -n "$last" && "$today" > "$last" ]]; then
-      _job_end "$name"
-      continue
-    fi
-    if ! job_read "$name" "$copy"; then
-      _job_update "$name" '.status = "invalid" | .error = "unreadable" | .next_run = null'
-      continue
-    fi
-    if ! job="$(job_check "$name" "$copy" "$since" "$enabled")"; then
-      _job_update "$name" '.status = "invalid" | .error = $w | .next_run = null' --arg w "$job"
-      continue
-    fi
-    [[ "$(jq -r '.enabled' <<<"$job")" == true ]] && enabled=$((enabled + 1))
-    if [[ "$today" > "$(jq -r '.end' <<<"$job")" ]]; then
-      _job_end "$name"
-      continue
-    fi
-    _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
-      | .error = (if .status == "idle" or .status == "ok" then null else .error end)
-      | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
-    job_due "$job" "$state" "$now" && due+=("$name $job")
-  done < <(_jobs_order "$today")
   rm -f -- "$copy"
+  _jobs_scan "$today" "$now"
   _jobs_prune_seen "$today"
   # The files are checked and their state kept either way; without a way to
   # show them in Home Assistant, none of the chat's jobs runs. The places
   # left are counted with every run that is on, a file from the repo's too.
   jobs_can_run || return 0
-  parallel="$(_morning_number '.jobs_parallel' 3)"
-  (( parallel >= 1 )) || parallel=1
-  (( parallel <= 10 )) || parallel=10
+  parallel="$(_jobs_parallel)"
   count="$(jobs_running | wc -l | tr -d ' ')"
-  for entry in "${due[@]}"; do
+  for entry in ${_JOBS_DUE[@]+"${_JOBS_DUE[@]}"}; do
     (( count < parallel )) || break
     _job_start "${entry%% *}" "${entry#* }" "$now" && count=$((count + 1))
+  done
+  return 0
+}
+
+# A chat's request to run one of its jobs now (the jobs server's
+# job_run_now): an empty file named by the job in HC_JOB_REQUESTS, a folder
+# of the Claude user's. Any process of that user can write there, so a
+# request starts only what the chat's own jobs already may.
+: "${HC_JOB_REQUESTS_PASS:=5}"
+# At most this many requests are acted on in a pass: each costs a pass over
+# the job files (_jobs_scan). The rest stay for the next pass.
+: "${HC_JOB_REQUESTS_ACT:=2}"
+# The entries that could not be removed, kept so they do not take a pass's
+# places again; at most HC_JOB_REQUESTS_KEEP of them.
+HC_JOB_REQUESTS_KEEP=64
+HC_JOB_REQUESTS_STUCK=()
+HC_JOB_REQUESTS_LINK=0
+
+# jobs_request <name> - starts a chat's job now, as the tick would: valid and
+# counted within the limit as the tick counts it, enabled, not past its end,
+# not running, only while Home Assistant can see the jobs, and within
+# jobs_parallel. Its run sets last_run as a tick's does. Otherwise nothing
+# starts, the job's state is left as it is, and the log says why.
+jobs_request() {
+  local name="$1" now today why="" count parallel
+  now="$(date +%s)"
+  today="$(_job_date "$now" %F)" || return 0
+  mkdir -p "$HC_JOB_STATE"
+  if declare -F fixed_is >/dev/null && fixed_is "$name"; then
+    why="it is a file from the repo"
+  else
+    _jobs_reap
+    if [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name"; then
+      why="it runs already"
+    else
+      _jobs_scan "$today" "$now" "$name"
+      case "$_JOBS_WANT" in
+        ok) [[ "$(jq -r '.enabled' <<<"$_JOBS_WANT_JOB")" == true ]] || why="it is switched off" ;;
+        "") why="there is no such job" ;;
+        running) why="it runs already" ;;
+        ended) why="it has ended" ;;
+        *) why="it is not valid ($_JOBS_WANT)" ;;
+      esac
+    fi
+  fi
+  if [[ -z "$why" ]]; then
+    # A request tries the broker afresh, as a tick does.
+    jobs_tick_begin
+    jobs_can_run || why="Home Assistant cannot see the jobs"
+  fi
+  if [[ -z "$why" ]]; then
+    parallel="$(_jobs_parallel)"
+    count="$(jobs_running | wc -l | tr -d ' ')"
+    (( count < parallel )) || why="$count runs are on already"
+  fi
+  if [[ -n "$why" ]]; then
+    log "jobs: the request to run $name now is dropped: $why"
+    return 0
+  fi
+  log "jobs: $name runs now, as the chat asked"
+  _job_start "$name" "$_JOBS_WANT_JOB" "$now" || true
+}
+
+# _jobs_request_stuck <entry> - true when the entry is one that could not
+# be removed before.
+_jobs_request_stuck() {
+  local stuck
+  for stuck in ${HC_JOB_REQUESTS_STUCK[@]+"${HC_JOB_REQUESTS_STUCK[@]}"}; do
+    [[ "$stuck" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+# jobs_requests - the command loop's pass over the requests, on every pass:
+# at most HC_JOB_REQUESTS_PASS entries, the rest at the next, and at most
+# HC_JOB_REQUESTS_ACT requests acted on. Every entry is removed, as the
+# Claude user, whose folder it is: never by root, so a link or a folder put
+# there is never followed. A folder that user made unwritable is first made
+# its own again, as that user. Root only tests whether an entry is a link
+# before anything else about it, so it never looks at a link's target. Only
+# a plain file named by a job name is a request, and only its name is read,
+# never its content; it is acted on once it is gone, so it cannot start a
+# job twice. An entry that could not be removed is kept aside and takes no
+# place in later passes. A pass over an empty folder lists it and does
+# nothing else.
+jobs_requests() {
+  local dir="$HC_JOB_REQUESTS" entry name left=0 seen=0 wanted=0
+  local -a entries=() folders=() names=()
+  if [[ -L "$dir" ]]; then
+    (( HC_JOB_REQUESTS_LINK )) || log "jobs: the requests folder is a link; it is not read"
+    HC_JOB_REQUESTS_LINK=1
+    return 0
+  fi
+  HC_JOB_REQUESTS_LINK=0
+  [[ ! -L "$dir" && -d "$dir" ]] || return 0
+  # An entry kept aside that is gone now is forgotten, so a request of the
+  # same name later is read.
+  local -a stuck=()
+  for entry in ${HC_JOB_REQUESTS_STUCK[@]+"${HC_JOB_REQUESTS_STUCK[@]}"}; do
+    [[ -L "$entry" || -e "$entry" ]] && stuck+=("$entry")
+  done
+  HC_JOB_REQUESTS_STUCK=(${stuck[@]+"${stuck[@]}"})
+  while IFS= read -r -d '' entry; do
+    # A bound on the listing too, however many entries are skipped.
+    seen=$((seen + 1))
+    (( seen <= HC_JOB_REQUESTS_PASS * 4 )) || break
+    _jobs_request_stuck "$entry" && continue
+    name="${entry##*/}"
+    if [[ ! -L "$entry" && -f "$entry" ]] && job_name_ok "$name"; then
+      # A request beyond those acted on this pass stays for the next.
+      (( wanted < HC_JOB_REQUESTS_ACT )) || continue
+      wanted=$((wanted + 1))
+      names+=("$name")
+    elif [[ ! -L "$entry" && -d "$entry" ]]; then
+      folders+=("$entry")
+    fi
+    entries+=("$entry")
+    (( ${#entries[@]} < HC_JOB_REQUESTS_PASS )) || break
+  done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+  (( ${#entries[@]} )) || return 0
+  # One time limit for both steps, as the Claude user: the folders made that
+  # user's own again, then everything removed.
+  # shellcheck disable=SC2016  # the inner shell's variables
+  as_claude env HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" 10 sh -c '
+    n="$1"; shift
+    i=0
+    for f in "$@"; do
+      i=$((i + 1))
+      [ "$i" -le "$n" ] && chmod -R u+rwx -- "$f" 2>/dev/null
+    done
+    shift "$n"
+    rm -rf -- "$@"
+  ' sh "${#folders[@]}" ${folders[@]+"${folders[@]}"} "${entries[@]}" </dev/null >/dev/null 2>&1 || true
+  for entry in "${entries[@]}"; do
+    if [[ -L "$entry" || -e "$entry" ]]; then
+      left=$((left + 1))
+      (( ${#HC_JOB_REQUESTS_STUCK[@]} < HC_JOB_REQUESTS_KEEP )) && HC_JOB_REQUESTS_STUCK+=("$entry")
+    fi
+  done
+  (( left )) && log "jobs: $left entries in the requests folder could not be removed; none is acted on"
+  for name in ${names[@]+"${names[@]}"}; do
+    # One that is still there is not acted on: it would start again.
+    [[ -L "$dir/$name" || -e "$dir/$name" ]] && continue
+    jobs_request "$name"
   done
   return 0
 }

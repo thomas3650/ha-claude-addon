@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# ha-claude-job-check --origin chat|repo --since YYYY-MM-DD --others N --name NAME
+#   < job.json
+# Checks a job file read from standard input with the add-on's own checks.
+# Prints the job in its normal form and exits 0, or prints one error word and
+# exits 1. Bad arguments exit 2 with a usage line on standard error.
+#
+#   --origin chat   the chat's job file (job_check): --since is the day the
+#                   28 days count from, --others the number of other enabled
+#                   chat jobs.
+#   --origin repo   a file from the repo (fixed_check): it is compared with
+#                   the working folder's file of the same name, and is
+#                   refused as differs where a field not the chat's own
+#                   differs. --since and --others are taken and not used.
+#
+# It runs as whoever calls it, the Claude user included, and is never setuid.
+# It reads standard input and the working folder (root's, readable by all),
+# and nothing under the job state, which only root reads.
+# HC_LIB is for the tests, which run it from the source tree.
+LIB="${HC_LIB:-/usr/local/lib/ha-claude}"
+usage() {
+  echo "usage: ha-claude-job-check --origin chat|repo --since YYYY-MM-DD --others N --name NAME < job.json" >&2
+  exit 2
+}
+origin="" since="" others="" name=""
+while (( $# > 0 )); do
+  case "$1" in
+    --origin) (( $# >= 2 )) || usage; origin="$2"; shift 2 ;;
+    --since)  (( $# >= 2 )) || usage; since="$2"; shift 2 ;;
+    --others) (( $# >= 2 )) || usage; others="$2"; shift 2 ;;
+    --name)   (( $# >= 2 )) || usage; name="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ "$origin" == chat || "$origin" == repo ]] || usage
+[[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage
+[[ "$others" =~ ^[0-9]{1,6}$ ]] || usage
+[[ -n "$name" ]] || usage
+others=$((10#$others))
+
+# The time limit is the add-on's own, beside this command.
+: "${HC_LIMIT_BIN:=${BASH_SOURCE[0]%/*}/ha-claude-limit}"
+for f in paths jobs fixed; do
+  # shellcheck disable=SC1090
+  . "$LIB/$f.sh"
+done
+
+tmp="$(mktemp "${TMPDIR:-/tmp}/ha-claude-job-check.XXXXXX")" || exit 2
+trap 'rm -f -- "$tmp"' EXIT
+# A job is at most HC_JOB_BYTES; one byte more is read to tell a file that is
+# too large, which is not a job file.
+# Bounded in time as well: a writer that stalls or never ends is not a job.
+rc=0
+HC_LIMIT_GRACE=1 "$HC_LIMIT_BIN" "$HC_JOB_WAIT" head -c "$((HC_JOB_BYTES + 1))" > "$tmp" || rc=$?
+if (( rc != 0 )); then
+  echo shape
+  exit 1
+fi
+if (( $(wc -c < "$tmp") > HC_JOB_BYTES )); then
+  echo shape
+  exit 1
+fi
+if [[ "$origin" == chat ]]; then
+  job_check "$name" "$tmp" "$since" "$others"
+else
+  job_name_ok "$name" || { echo name; exit 1; }
+  fixed_check "$name" "$tmp"
+fi
