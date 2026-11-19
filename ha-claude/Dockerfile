@@ -7,6 +7,7 @@ FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce
 ARG BUILD_VERSION=dev
 ARG BUILD_ARCH=unknown
 ARG CLAUDE_CODE_VERSION=2.1.319
+ARG PLAYWRIGHT_MCP_VERSION=0.0.84
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
@@ -23,6 +24,21 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && npm cache clean --force \
  && claude --version | grep -F "${CLAUDE_CODE_VERSION}"
+
+# The browser: Playwright MCP, pinned, and the headless Chromium its own
+# Playwright names, with the libraries it needs, in a folder root owns and
+# every user can read and no one but root can write.
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/share/ha-claude/browsers
+RUN npm install -g "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" \
+ && apt-get update \
+ && playwright-mcp install-browser --with-deps --only-shell chromium \
+ && shell="$(find "$PLAYWRIGHT_BROWSERS_PATH" -path '*chromium_headless_shell-*' -type f -name chrome-headless-shell | head -n 1)" \
+ && [ -x "$shell" ] && ln -s "$shell" "$PLAYWRIGHT_BROWSERS_PATH/chrome-headless-shell" \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm cache clean --force \
+ && chown -R root:root "$PLAYWRIGHT_BROWSERS_PATH" /usr/local/lib/node_modules/@playwright \
+ && chmod -R a+rX,go-w "$PLAYWRIGHT_BROWSERS_PATH" /usr/local/lib/node_modules/@playwright \
+ && playwright-mcp --version | grep -F "${PLAYWRIGHT_MCP_VERSION}"
 
 RUN useradd --no-create-home --home-dir /data/home --shell /bin/bash --uid 1500 claude
 
