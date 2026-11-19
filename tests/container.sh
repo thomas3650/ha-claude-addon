@@ -6,7 +6,12 @@ name="hc-smoke-$$"
 logs() { docker logs "$name" 2>&1; }
 fail() { echo "FAIL: $*" >&2; logs >&2 || true; docker rm -f "$name" >/dev/null 2>&1; exit 1; }
 
-docker run -d -i --name "$name" -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all -e HC_MCP_UPSTREAM=http://mcp.invalid/api/mcp "$image" >/dev/null
+# Docker's default seccomp profile refuses the user namespaces Chromium's
+# sandbox needs; the add-on's own container on Home Assistant OS allows them
+# (read there with unshare as the Claude user), so the test container is
+# started without that profile to be alike.
+docker run -d -i --name "$name" --security-opt seccomp=unconfined \
+  -e SUPERVISOR_TOKEN=smoke-secret -e HC_INGRESS_ALLOW=all -e HC_MCP_UPSTREAM=http://mcp.invalid/api/mcp "$image" >/dev/null
 
 for _ in $(seq 1 30); do
   grep -q "ready" <<<"$(logs)" && break
@@ -86,6 +91,8 @@ grep -q '"protocolVersion":"2025-06-18"' <<<"$answer" || fail "the jobs server d
 answer="$(docker exec -i -u claude "$name" /usr/local/bin/ha-claude-docs-mcp <<<"$init")" || fail "the documents server did not run"
 grep -q '"name":"documents"' <<<"$answer" || fail "the documents server did not answer initialize: $answer"
 docker exec "$name" pdftotext -v >/dev/null 2>&1 || fail "pdftotext is missing"
+docker exec -u claude "$name" unshare --user --map-root-user true \
+  || fail "the container allows no user namespaces, which the browser's sandbox needs"
 # The browser reads a page built with JavaScript, as the Claude user, with
 # Chromium's sandbox on: the price is only on the page once its script ran.
 page="data:text/html,<div id=p></div><script>document.getElementById('p').textContent='Pris: '+(400+99)+' kr'</script>"
