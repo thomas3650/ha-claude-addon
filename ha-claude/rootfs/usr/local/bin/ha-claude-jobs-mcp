@@ -19,6 +19,7 @@
 // for the tests, which run it from the source tree.
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -180,41 +181,82 @@ function wantName(args) {
   return args.name;
 }
 
+// The lock is the folder .lock holding one folder named by its holder's
+// nonce. It is made whole beside it, as .lock.<nonce>/<nonce>, and renamed
+// into place: a rename onto a folder that is not empty fails, so only one
+// holds it. Each holder removes only its own nonce, and then .lock only when
+// it is empty, so no call removes a lock another holds.
+const LOCK = path.join(JOBS, '.lock');
+const DIR_TAKEN = ['EEXIST', 'ENOTEMPTY', 'ENOTDIR', 'EISDIR', 'EPERM', 'EACCES'];
+
 function lock() {
-  const dir = path.join(JOBS, '.lock');
+  const nonce = `${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  const mine = path.join(JOBS, `.lock.${nonce}`);
+  try {
+    fs.mkdirSync(mine, 0o700);
+    fs.mkdirSync(path.join(mine, nonce), 0o700);
+  } catch { refuse('folder', 'jobs'); }
   const until = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
-    try {
-      fs.mkdirSync(dir, 0o700);
-      return dir;
-    } catch (e) {
-      if (e.code !== 'EEXIST') refuse('folder', 'jobs');
+  let held = false;
+  try {
+    for (;;) {
+      try {
+        fs.renameSync(mine, LOCK);
+        held = true;
+        return nonce;
+      } catch (e) {
+        if (!DIR_TAKEN.includes(e.code)) refuse('folder', 'jobs');
+      }
+      takeOverStale();
+      if (Date.now() > until) refuse('busy', 'name');
+      sleep(100);
     }
-    // A lock left by a server that died is taken over once it is old; it is
-    // a folder, never a file.
-    const st = lstat(dir);
-    if (st !== null && st.isDirectory() && Date.now() - st.mtimeMs > LOCK_STALE_MS) {
-      try { fs.rmdirSync(dir); } catch { /* another took it */ }
-      continue;
+  } finally {
+    if (!held) {
+      try { fs.rmdirSync(path.join(mine, nonce)); } catch { /* not made */ }
+      try { fs.rmdirSync(mine); } catch { /* not made */ }
     }
-    if (Date.now() > until) refuse('busy', 'name');
-    sleep(100);
   }
 }
 
-function unlock(dir) {
-  try { fs.rmdirSync(dir); } catch { /* gone already */ }
+// A lock left by a server that died: its nonce older than LOCK_STALE_MS.
+// Only one waiter removes that nonce; .lock is then removed only while it is
+// still empty, so a lock another has taken meanwhile is left.
+function takeOverStale() {
+  const st = lstat(LOCK);
+  if (st === null || !st.isDirectory()) return;
+  let entries;
+  try { entries = fs.readdirSync(LOCK); } catch { return; }
+  for (const e of entries) {
+    const held = lstat(path.join(LOCK, e));
+    if (held === null || !held.isDirectory() || Date.now() - held.mtimeMs <= LOCK_STALE_MS) continue;
+    try { fs.rmdirSync(path.join(LOCK, e)); } catch { return; }
+    try { fs.rmdirSync(LOCK); } catch { /* another's now */ }
+    return;
+  }
+}
+
+function unlock(nonce) {
+  try { fs.rmdirSync(path.join(LOCK, nonce)); } catch { return; /* not ours any more */ }
+  try { fs.rmdirSync(LOCK); } catch { /* another's now */ }
 }
 
 // Writes buf to <name>.json.new and moves it over <name>.json, in one step.
+// The file beside it is opened without following a link and without waiting
+// on a pipe, and used only when it is a plain file with no other name, so a
+// hard link planted there to another file is not overwritten.
 function writeJob(name, buf) {
   const file = path.join(JOBS, `${name}.json`);
   const tmp = `${file}.new`;
   let fd;
   try {
-    fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o600);
+    fd = fs.openSync(tmp, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW
+      | fs.constants.O_NONBLOCK, 0o600);
   } catch { refuse('write', 'name'); }
   try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1) refuse('write', 'name');
+    fs.ftruncateSync(fd, 0);
     let off = 0;
     while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
     fs.fsyncSync(fd);
@@ -267,7 +309,9 @@ function jobSet(args) {
     const keys = new Set([...Object.keys(placed), ...Object.keys(job)]);
     for (const k of [...keys].sort()) {
       if (REPO_MINE.includes(k)) continue;
-      if (!(k in job) || !(k in placed) || canon(job[k]) !== canon(placed[k])) refuse('differs', k);
+      if (!Object.hasOwn(job, k) || !Object.hasOwn(placed, k) || canon(job[k]) !== canon(placed[k])) {
+        refuse('differs', k);
+      }
     }
   } else {
     // created: today for a new job, the file's own for one that is there.

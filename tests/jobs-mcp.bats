@@ -167,6 +167,15 @@ listing() { (cd "$HC_JOBS" && find . | LC_ALL=C sort); }
   run set_job house-round "$(jq -c '.enabled = false' "$EX/valid/job-repo/step-a.json")"
   [ "$status" -ne 0 ]; [ "$output" = "run_by: run_by" ]
   [ "$(jq -r .enabled "$HC_JOBS/house-round.json")" = true ]
+  # Only the files' own keys are compared, not what every object inherits:
+  # with a check that passes everything, a key the placed file lacks differs.
+  printf '#!/usr/bin/env bash\ncat >/dev/null\n' > "$BATS_TEST_TMPDIR/pass"
+  chmod +x "$BATS_TEST_TMPDIR/pass"
+  repo_file "$f" night-briefing
+  HC_JOB_CHECK="$BATS_TEST_TMPDIR/pass" run set_job night-briefing "$(jq -c '. + {"__proto__": {}}' "$f")"
+  [ "$status" -ne 0 ]; [ "$output" = "differs: __proto__" ]
+  HC_JOB_CHECK="$BATS_TEST_TMPDIR/pass" run set_job night-briefing "$(jq -c '. + {"constructor": null}' "$f")"
+  [ "$status" -ne 0 ]; [ "$output" = "differs: constructor" ]
   # A chat's job may not take a repo file's name.
   run set_job house-round "$(chat_job)"
   [ "$status" -ne 0 ]
@@ -189,6 +198,19 @@ listing() { (cd "$HC_JOBS" && find . | LC_ALL=C sort); }
   [ "$status" -ne 0 ]; [ "$output" = "write: name" ]
   [ "$(cat "$BATS_TEST_TMPDIR/target")" = keep ]
   [ ! -e "$HC_JOBS/other.json" ]
+  # Nor a hard link to another job's file, which is left whole.
+  place third "$(chat_job false)"
+  ln "$HC_JOBS/third.json" "$HC_JOBS/fourth.json.new"
+  run set_job fourth "$job"
+  [ "$status" -ne 0 ]; [ "$output" = "write: name" ]
+  [ "$(jq -cS . "$HC_JOBS/third.json")" = "$(chat_job false | jq -cS .)" ]
+  [ ! -e "$HC_JOBS/fourth.json" ]
+  # A pipe there is refused at once, not waited on.
+  mkfifo "$HC_JOBS/fifth.json.new"
+  run set_job fifth "$job"
+  [ "$status" -ne 0 ]; [ "$output" = "write: name" ]
+  [ ! -e "$HC_JOBS/fifth.json" ]
+  [ ! -e "$HC_JOBS/.lock" ]
 }
 
 @test "review 1: a task of 4000 characters with quotes and line breaks is written byte for byte as checked" {
@@ -226,20 +248,49 @@ listing() { (cd "$HC_JOBS" && find . | LC_ALL=C sort); }
   local i a b
   for i in 1 2 3 4 5 6 7 8 9; do place "job-$i" "$(chat_job)"; done
   # Both pass the first count while the lock is held, then meet it.
-  mkdir "$HC_JOBS/.lock"
+  mkdir -p "$HC_JOBS/.lock/held-by-test"
   set_job first-new "$(chat_job)" > "$BATS_TEST_TMPDIR/a" &
   a=$!
   set_job second-new "$(chat_job)" > "$BATS_TEST_TMPDIR/b" &
   b=$!
   sleep 2
   [ ! -e "$HC_JOBS/first-new.json" ] && [ ! -e "$HC_JOBS/second-new.json" ]
-  rmdir "$HC_JOBS/.lock"
+  # A lock another holds is left as it is.
+  [ -d "$HC_JOBS/.lock/held-by-test" ]
+  rmdir "$HC_JOBS/.lock/held-by-test" "$HC_JOBS/.lock"
   wait "$a" || true
   wait "$b" || true
   [ "$(cat "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b" | LC_ALL=C sort | tr '\n' ' ')" = "limit: enabled written: first-new " ] \
     || [ "$(cat "$BATS_TEST_TMPDIR/a" "$BATS_TEST_TMPDIR/b" | LC_ALL=C sort | tr '\n' ' ')" = "limit: enabled written: second-new " ]
   [ "$(find "$HC_JOBS" -maxdepth 1 -name '*-new.json' | wc -l)" -eq 1 ]
   [ ! -e "$HC_JOBS/.lock" ]
+  [ -z "$(find "$HC_JOBS" -maxdepth 1 -name '.lock.*')" ]
+}
+
+@test "a lock left by a server that died is taken over, by one waiter at a time" {
+  local a b
+  mkdir -p "$HC_JOBS/.lock/dead-server"
+  touch -t 202001010000 "$HC_JOBS/.lock/dead-server"
+  set_job first-new "$(chat_job false)" > "$BATS_TEST_TMPDIR/a" &
+  a=$!
+  set_job second-new "$(chat_job false)" > "$BATS_TEST_TMPDIR/b" &
+  b=$!
+  wait "$a"
+  wait "$b"
+  [ "$(cat "$BATS_TEST_TMPDIR/a")" = "written: first-new" ]
+  [ "$(cat "$BATS_TEST_TMPDIR/b")" = "written: second-new" ]
+  [ ! -e "$HC_JOBS/.lock" ]
+  [ -z "$(find "$HC_JOBS" -maxdepth 1 -name '.lock.*')" ]
+  # A lock that is not old is not taken over.
+  mkdir -p "$HC_JOBS/.lock/live-server"
+  set_job third-new "$(chat_job false)" > "$BATS_TEST_TMPDIR/c" &
+  a=$!
+  sleep 1
+  [ -d "$HC_JOBS/.lock/live-server" ]
+  [ ! -e "$HC_JOBS/third-new.json" ]
+  rmdir "$HC_JOBS/.lock/live-server" "$HC_JOBS/.lock"
+  wait "$a"
+  [ "$(cat "$BATS_TEST_TMPDIR/c")" = "written: third-new" ]
 }
 
 @test "job_list shows what is there, and skips ended/, .requests/, links and other names" {
@@ -353,8 +404,9 @@ listing() { (cd "$HC_JOBS" && find . | LC_ALL=C sort); }
   while IFS= read -r f; do
     [ -f "$HC_JOBS/$f" ] || { echo "gone: $f"; false; }
   done <<<"$before"
-  # The server has no call that removes a file; it removes only its own lock,
-  # a folder.
-  ! grep -nE 'unlink|rmSync|\.rm\(|truncate' "$SERVER"
-  [ "$(grep -c 'rmdirSync' "$SERVER")" -eq 2 ]
+  # The server has no call that removes a file; it removes only folders of
+  # its lock.
+  ! grep -nE 'unlink|rmSync|\.rm\(' "$SERVER"
+  [ "$(grep -c 'rmdirSync' "$SERVER")" -eq 6 ]
+  [ -z "$(grep 'rmdirSync' "$SERVER" | grep -vE 'rmdirSync\((LOCK|mine|path\.join\((LOCK|mine), [a-z]+\))\)')" ]
 }
