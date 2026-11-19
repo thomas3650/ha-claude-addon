@@ -16,4 +16,5 @@
 : "${HC_JOB_RESULTS:=$HC_RESULTS/jobs}"
 : "${HC_JOB_STATE:=$HC_STATE/jobs}"
 : "${HC_JOB_REQUESTS:=$HC_JOBS/.requests}"
+: "${HC_JOB_PUBLIC:=$HC_STATUS/jobs}"
 : "${HC_SCHEMAS:=/usr/share/ha-claude/schemas}"

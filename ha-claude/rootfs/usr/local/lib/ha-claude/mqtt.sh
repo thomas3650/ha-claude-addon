@@ -232,7 +232,7 @@ _mqtt_publish_job() {
            device: {identifiers: ["ha_claude_jobs"], name: "HA Claude jobs"}}
         + if $key == "status" then
             {value_template: "{{ value_json.status }}", json_attributes_topic: $topic,
-             json_attributes_template: "{{ {\"type\": value_json.type, \"schedule\": value_json.schedule, \"end\": value_json.end, \"task\": value_json.task, \"description\": value_json.description, \"run_by\": value_json.run_by, \"error\": value_json.error, \"calls\": value_json.calls} | tojson }}"}
+             json_attributes_template: "{{ {\"type\": value_json.type, \"schedule\": value_json.schedule, \"end\": value_json.end, \"task\": value_json.task, \"description\": value_json.description, \"run_by\": value_json.run_by, \"error\": value_json.error, \"request\": value_json.request, \"calls\": value_json.calls} | tojson }}"}
           elif $key == "next_run" or $key == "last_run" then
             {device_class: "timestamp", value_template: "{{ value_json.\($key) or None }}"}
           elif $key == "finding" then
@@ -254,7 +254,17 @@ _mqtt_publish_job() {
       def text($nl): if type == "string" then clean($nl) else null end;
       $j[0] as $j | $s[0] as $s
       | {run_by: ($j.run_by | text(false)),
-         status: ($s.status // "idle"), error: ($s.error // null),
+         status: ($s.status // "idle"),
+         # A dropped or failed request since the last run shows in error
+         # while the state has no error of its own; the next run clears it.
+         error: ($s.error // (($s.request // {}) as $r
+                  | if ($r | type) == "object" and ($r.outcome | IN("dropped", "failed"))
+                       and ($r.at | type) == "number" and $r.at >= ($s.last_run // 0)
+                    then "\($r.outcome): \($r.reason // "unknown")" | text(false) else null end)),
+         request: (($s.request // null) as $r
+                   | if ($r | type) == "object"
+                     then {at: ($r.at | time), outcome: ($r.outcome | text(false)), reason: ($r.reason | text(false))}
+                     else null end),
          next_run: ($s.next_run | time), last_run: ($s.last_run | time),
          finding: ($s.finding | text(false)), text: ($s.text | text(true)),
          notify: (if $s.notify == true then "ON" else "OFF" end),
