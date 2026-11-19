@@ -342,7 +342,7 @@ job_next() {
 # Every job runs here, a chat's job and a file from the repo alike: the
 # file's agent, with the file's limits and a first message built from the
 # file (job_first_message), its result checked, and the file's after steps
-# done (job_after). What differs by origin is where the result goes and
+# done (_job_finish_repo). What differs by origin is where the result goes and
 # what is done with it: a chat's job writes HC_JOB_RESULTS/<name>.json and
 # its finding stays with the job; a file from the repo writes
 # HC_RESULTS/<agent>.json, raised as ha_claude_result, and its outcome is
@@ -661,17 +661,6 @@ job_outcome_command() {
   if [[ -n "$morning" && "$morning" == "$1" ]]; then echo morning; else echo run; fi
 }
 
-# job_after <name> <outcome> <by> <job-json> - a file from the repo's after
-# steps, at the end of its run, and its outcome. With clear_chat the chat's
-# session is cleared, which the command loop also handles, so the runner
-# never does it: it writes a request (_job_after_request) and returns
-# without waiting for it (jobs_after_run carries it out). Without, the
-# outcome is raised at once (_job_after_raise). A request that cannot be
-# written is logged, and the outcome raised without the clearing.
-job_after() {
-  _job_after_request "$@" || _job_after_raise "$@"
-}
-
 # _job_after_request <name> <outcome> <by> <job-json> - when the file has
 # the after step clear_chat, writes the request in HC_STATE/after/<name>,
 # which only root can read, "clear the chat, then raise this outcome", whole
@@ -702,7 +691,7 @@ _job_after_raise() {
   raise_outcome "$(job_outcome_command "$1")" "$2" "$(jq -r '.agent' <<<"$4")" "$3"
 }
 
-# jobs_after_run - carries out the requests the runner left (job_after):
+# jobs_after_run - carries out the requests the runner left (_job_after_request):
 # with the option morning_chat on, and not after not_configured, the chat
 # is cleared with the opening for the outcome; then the outcome is raised,
 # and the request removed. Called by the command loop on every pass, after
@@ -819,11 +808,16 @@ _job_next_after() {
 }
 
 # _job_finish_repo <name> <job-json> <agent> <marker> <by> <status> <why> -
-# writes how a run of a file from the repo ended, and does its after steps
-# (job_after). A request to clear the chat is written before the state that
-# ends the run: sync's wait, and anything else that sees the run ended, then
-# sees the request as well. Without one, the outcome is raised after the
-# state. The finding is the body publish_result kept, written by this run;
+# writes how a run of a file from the repo ended, and does its after steps.
+# With clear_chat the chat's session is cleared, which the command loop also
+# handles, so the runner never does it: it writes a request
+# (_job_after_request) and does not wait for it (jobs_after_run carries it
+# out). The request is written before the state that ends the run: sync's
+# wait, and anything else that sees the run ended, then sees the request as
+# well. Without one, or when it cannot be written (logged), the outcome is
+# raised after the state (_job_after_raise), and after the run's marker is
+# gone: a run the outcome starts again makes a marker of its own, which
+# this one must not remove. The finding is the body publish_result kept, written by this run;
 # when there is none, the finding is empty rather than the last run's.
 # notify is not for a file from the repo.
 _job_finish_repo() {
@@ -847,6 +841,7 @@ _job_finish_repo() {
   else
     _job_failed "$name" "$status" "$7" "$next"
   fi
+  rm -f -- "$marker"
   [[ "$requested" == yes ]] || _job_after_raise "$name" "$status" "$by" "$job"
 }
 

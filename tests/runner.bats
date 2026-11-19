@@ -228,6 +228,19 @@ state() { jq -r "$2" "$HC_JOB_STATE/$1.json"; }
   [ "$(state beta-run .status)" = failed ]
 }
 
+@test "a repo run's marker is gone before its outcome is raised, so a run the outcome starts keeps its own" {
+  runner_setup
+  repo_job alpha-run
+  raise_outcome() {
+    if [[ -e "$HC_JOB_STATE/alpha-run.started" ]]; then echo "outcome with marker" >> "$CALLS"; fi
+    echo "outcome $*" >> "$CALLS"
+  }
+  jobs_tick
+  wait_runs
+  grep -qx 'outcome run ok alpha-run jobs' "$CALLS"
+  ! grep -q 'outcome with marker' "$CALLS"
+}
+
 @test "the outcome is morning for the file morning_job names and run otherwise, with by" {
   runner_setup
   set_options '{"morning_job": "beta-run", "morning_chat": false}'
