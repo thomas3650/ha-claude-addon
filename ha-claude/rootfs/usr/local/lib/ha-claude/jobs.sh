@@ -1093,73 +1093,96 @@ _jobs_parallel() {
   printf '%s\n' "$parallel"
 }
 
-# _jobs_scan <today> <now> [want] - the tick's pass over the chat's jobs, in
-# their order (_jobs_order): each file read and checked, the enabled ones
-# counted, so the limit refuses the newest. Without want, as the tick: writes
-# each job's state, ends the jobs past their end and sets _JOBS_DUE to the
-# due ones, "<name> <job>" each. With want, for a request (jobs_request):
-# changes no state and ends nothing, and stops at that job, counted as the
-# tick counts it. It sets _JOBS_WANT to ok, with _JOBS_WANT_JOB its normal
-# form, or to why it cannot run: running, ended, unreadable or the check's
-# word; empty when it is not among the jobs read.
-_jobs_scan() {
-  local today="$1" now="$2" want="${3:-}" name state since job last enabled=0
+# _jobs_judge <today> [stop] - judges the chat's jobs in their order
+# (_jobs_order), and changes nothing but the first sights (_job_seen). Each
+# file is read and checked and the enabled ones counted, so the limit
+# refuses the newest; a running job still counts. With stop, it ends after
+# that name. For each job, index by index:
+#   _JOBS        the name
+#   _JOBS_SINCE  the day the add-on first saw it
+#   _JOBS_WORD   ok, running, ended, unreadable or the check's word
+#   _JOBS_JOB    the normal form when the word is ok, empty otherwise
+_jobs_judge() {
+  local today="$1" stop="${2:-}" name since job last word enabled=0
   local copy="$HC_STATE/job.in"
-  [[ -n "$want" ]] && copy="$HC_STATE/job-request.in"
-  _JOBS_DUE=()
-  _JOBS_WANT=""
-  _JOBS_WANT_JOB=""
-  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  [[ -n "$stop" ]] && copy="$HC_STATE/job-request.in"
+  _JOBS=(); _JOBS_SINCE=(); _JOBS_WORD=(); _JOBS_JOB=()
   while read -r name; do
-    state="$(_job_state "$name")"
     since="$(_job_seen "$name" "$today")"
-    if [[ -z "$want" && "$(jq -r '.status' <<<"$state")" != running ]]; then
-      _job_update "$name" '.first_seen = $d | .status = (.status // "idle")' --arg d "$since"
-      state="$(_job_state "$name")"
-    fi
-    if [[ "$(jq -r '.status' <<<"$state")" == running ]]; then
+    job=""
+    if [[ "$(_job_status "$name")" == running ]]; then
       # Its runner owns the state; it still counts against the limit.
       if job_read "$name" "$copy" && job="$(job_check "$name" "$copy" "$since" "$enabled")" \
          && [[ "$(jq -r '.enabled' <<<"$job")" == true ]]; then
         enabled=$((enabled + 1))
       fi
-      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=running; break; }
-      continue
+      word=running; job=""
+    else
+      # Whatever the file says, a job ends 28 days after the add-on first saw it.
+      last="$(_job_last_day "$since")" || last=""
+      if [[ -n "$last" && "$today" > "$last" ]]; then
+        word=ended
+      elif ! job_read "$name" "$copy"; then
+        word=unreadable
+      elif ! job="$(job_check "$name" "$copy" "$since" "$enabled")"; then
+        word="$job"; job=""
+      else
+        [[ "$(jq -r '.enabled' <<<"$job")" == true ]] && enabled=$((enabled + 1))
+        if [[ "$today" > "$(jq -r '.end' <<<"$job")" ]]; then
+          word=ended; job=""
+        else
+          word=ok
+        fi
+      fi
     fi
-    # Whatever the file says, a job ends 28 days after the add-on first saw it.
-    last="$(_job_last_day "$since")" || last=""
-    if [[ -n "$last" && "$today" > "$last" ]]; then
-      [[ -z "$want" ]] && _job_end "$name"
-      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=ended; break; }
-      continue
-    fi
-    if ! job_read "$name" "$copy"; then
-      [[ -z "$want" ]] && _job_update "$name" '.status = "invalid" | .error = "unreadable" | .next_run = null'
-      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=unreadable; break; }
-      continue
-    fi
-    if ! job="$(job_check "$name" "$copy" "$since" "$enabled")"; then
-      [[ -z "$want" ]] && _job_update "$name" '.status = "invalid" | .error = $w | .next_run = null' --arg w "$job"
-      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT="$job"; break; }
-      continue
-    fi
-    [[ "$(jq -r '.enabled' <<<"$job")" == true ]] && enabled=$((enabled + 1))
-    if [[ "$today" > "$(jq -r '.end' <<<"$job")" ]]; then
-      [[ -z "$want" ]] && _job_end "$name"
-      [[ -n "$want" && "$name" == "$want" ]] && { _JOBS_WANT=ended; break; }
-      continue
-    fi
-    if [[ -n "$want" ]]; then
-      [[ "$name" == "$want" ]] && { _JOBS_WANT=ok; _JOBS_WANT_JOB="$job"; break; }
-      continue
-    fi
-    _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
-      | .error = (if .status == "idle" or .status == "ok" then null else .error end)
-      | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
-    job_due "$job" "$state" "$now" && _JOBS_DUE+=("$name $job")
+    _JOBS+=("$name"); _JOBS_SINCE+=("$since"); _JOBS_WORD+=("$word"); _JOBS_JOB+=("$job")
+    [[ "$name" == "$stop" ]] && break
   done < <(_jobs_order "$today")
   rm -f -- "$copy"
   return 0
+}
+
+# _jobs_scan <today> <now> - the tick's pass over the chat's jobs, as
+# _jobs_judge judges them: writes each job's state, ends the jobs past their
+# end and sets _JOBS_DUE to the due ones, "<name> <job>" each. A running
+# job's state is its runner's, and is left alone.
+_jobs_scan() {
+  local today="$1" now="$2" i name job state
+  _JOBS_DUE=()
+  _jobs_judge "$today"
+  # shellcheck disable=SC2016  # jq's variables, not the shell's
+  for i in "${!_JOBS[@]}"; do
+    name="${_JOBS[i]}"; job="${_JOBS_JOB[i]}"
+    [[ "${_JOBS_WORD[i]}" == running ]] && continue
+    _job_update "$name" '.first_seen = $d | .status = (.status // "idle")' --arg d "${_JOBS_SINCE[i]}"
+    case "${_JOBS_WORD[i]}" in
+      ended) _job_end "$name" ;;
+      ok)
+        state="$(_job_state "$name")"
+        _job_update "$name" '(if .status == "invalid" or .status == null then .status = "idle" else . end)
+          | .error = (if .status == "idle" or .status == "ok" then null else .error end)
+          | .next_run = $next' --argjson next "$(job_next "$job" "$state" "$now")"
+        job_due "$job" "$state" "$now" && _JOBS_DUE+=("$name $job")
+        ;;
+      *) _job_update "$name" '.status = "invalid" | .error = $w | .next_run = null' --arg w "${_JOBS_WORD[i]}" ;;
+    esac
+  done
+  return 0
+}
+
+# _jobs_find <today> <name> - for a request (jobs_request): judges the
+# chat's jobs up to that one, as the tick counts them, and sets _JOBS_WANT
+# to its word (ok, running, ended, unreadable or the check's), with
+# _JOBS_WANT_JOB its normal form when ok; both are empty when the name is
+# not among the jobs read.
+_jobs_find() {
+  local last
+  _JOBS_WANT=""; _JOBS_WANT_JOB=""
+  _jobs_judge "$1" "$2"
+  last=$(( ${#_JOBS[@]} - 1 ))
+  (( last >= 0 )) && [[ "${_JOBS[last]}" == "$2" ]] || return 0
+  _JOBS_WANT="${_JOBS_WORD[last]}"
+  _JOBS_WANT_JOB="${_JOBS_JOB[last]}"
 }
 
 # jobs_tick - reads the job files, checks them, writes each job's state,
@@ -1215,7 +1238,7 @@ jobs_tick() {
 # request starts only what the chat's own jobs already may.
 : "${HC_JOB_REQUESTS_PASS:=5}"
 # At most this many requests are acted on in a pass: each costs a pass over
-# the job files (_jobs_scan). The rest stay for the next pass.
+# the job files (_jobs_judge). The rest stay for the next pass.
 : "${HC_JOB_REQUESTS_ACT:=2}"
 # The entries that could not be removed, kept so they do not take a pass's
 # places again; at most HC_JOB_REQUESTS_KEEP of them.
@@ -1234,8 +1257,8 @@ HC_JOB_REQUESTS_LINK=0
 #   running    it runs already
 #   ended      past its end
 #   off        not enabled
-#   limit      over the enabled jobs' limit (the scan's word limit)
-#   invalid    the file fails the check (any other word of the scan)
+#   limit      over the enabled jobs' limit (the judgement's word limit)
+#   invalid    the file fails the check (any other word of the judgement)
 #   no-broker  Home Assistant cannot see the jobs
 #   parallel   jobs_parallel runs are on
 # A drop is kept only for a job that has a state already (every tick makes
@@ -1253,7 +1276,7 @@ jobs_request() {
     if [[ "$(_job_status "$name")" == running ]] && _job_pid_alive "$name"; then
       why="it runs already"; word=running
     else
-      _jobs_scan "$today" "$now" "$name"
+      _jobs_find "$today" "$name"
       case "$_JOBS_WANT" in
         ok) [[ "$(jq -r '.enabled' <<<"$_JOBS_WANT_JOB")" == true ]] || { why="it is switched off"; word=off; } ;;
         "") why="there is no such job" ;;
