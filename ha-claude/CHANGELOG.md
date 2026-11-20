@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/thomas3650/ha-claude-addon/compare/v1.4.0...v1.4.1) (2026-11-20)
+
+
+### Miscellaneous Chores
+
+* release 1.4.1, the refactor of the job runner ([#80](https://github.com/thomas3650/ha-claude-addon/issues/80)) ([a647e32](https://github.com/thomas3650/ha-claude-addon/commit/a647e32512c0da546b5d9b93516607442e2e680c))
+
 ## [1.4.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.3.0...v1.4.0) (2026-11-19)
 
 
