@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/thomas3650/ha-claude-addon/compare/v1.4.1...v1.5.0) (2026-11-24)
+
+
+### Features
+
+* support sync-includes.json for shared workspace files ([#84](https://github.com/thomas3650/ha-claude-addon/issues/84)) ([646b019](https://github.com/thomas3650/ha-claude-addon/commit/646b019be1e549f5142380a22ded31bfe4d3a619))
+
 ## [1.4.1](https://github.com/thomas3650/ha-claude-addon/compare/v1.4.0...v1.4.1) (2026-11-20)
 
 
