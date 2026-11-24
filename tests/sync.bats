@@ -352,3 +352,48 @@ _ino() { stat -c %i "$1" 2>/dev/null || stat -f %i "$1"; }
   [ "$HC_SYNC_RESULT" = ok ]
   [ "$(cat "$HC_WORKSPACE/CLAUDE.md")" = "new rules" ]
 }
+
+@test "sync-includes.json copies validated shared files and folders into the workspace" {
+  load_lib options sync
+  src="$BATS_TEST_TMPDIR/inc-repo"
+  mkdir -p "$src/shared/skills/diag" "$src/claude"
+  printf 'arch doc\n' > "$src/shared/architecture.md"
+  printf 'skill body\n' > "$src/shared/skills/diag/SKILL.md"
+  printf '[{"from":"shared/architecture.md","to":"architecture.md"},{"from":"shared/skills/diag","to":".claude/skills/diag"}]\n' \
+    > "$src/claude/sync-includes.json"
+  git -C "$src" init -q -b main
+  git -C "$src" config user.email t@t && git -C "$src" config user.name t
+  git -C "$src" add . && git -C "$src" commit -q -m init
+  set_options "{\"repo_url\":\"file://$src\",\"repo_path\":\"claude\"}"
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/architecture.md")" = "arch doc" ]
+  [ "$(cat "$HC_WORKSPACE/.claude/skills/diag/SKILL.md")" = "skill body" ]
+}
+
+@test "sync-includes.json rejects traversal, absolute paths, and symlinks, keeping previous workspace" {
+  load_lib options sync
+  mkdir -p "$HC_WORKSPACE"
+  printf 'good\n' > "$HC_WORKSPACE/keep.txt"
+  src="$BATS_TEST_TMPDIR/bad-inc-repo"
+  mkdir -p "$src/claude"
+  printf '[{"from":"../outside","to":"x"}]\n' > "$src/claude/sync-includes.json"
+  git -C "$src" init -q -b main
+  git -C "$src" config user.email t@t && git -C "$src" config user.name t
+  git -C "$src" add . && git -C "$src" commit -q -m init
+  set_options "{\"repo_url\":\"file://$src\",\"repo_path\":\"claude\"}"
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/keep.txt")" = "good" ]
+  [[ "$(cat "$HC_STATUS/last_sync_status")" == failed* ]]
+
+  # Symlink inside included folder is rejected too
+  mkdir -p "$src/shared"
+  ln -s /etc/passwd "$src/shared/link"
+  printf '[{"from":"shared","to":"copied"}]\n' > "$src/claude/sync-includes.json"
+  git -C "$src" add . && git -C "$src" commit -q -m symlink
+  run sync_workspace
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HC_WORKSPACE/keep.txt")" = "good" ]
+  [ ! -e "$HC_WORKSPACE/copied" ]
+}
